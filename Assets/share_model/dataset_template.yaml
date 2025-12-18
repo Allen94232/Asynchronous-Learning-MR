@@ -1,0 +1,48 @@
+# YOLOv8 数据集配置文件
+# 用于 origami 折纸形状识别训练
+
+# 数据集路径（修改为你的实际路径）
+path: C:/Users/user/Desktop/Asynchronous Learning/Assets/share_model/dataset
+train: images/train  # 训练集图片文件夹（相对于 path）
+val: images/val      # 验证集图片文件夹
+test: images/test    # 测试集图片文件夹（可选）
+
+# 类别数量和名称
+nc: 3  # 类别数量
+names: ['shape_1', 'shape_2', 'shape_3']  # 类别名称（顺序必须和标注的 class_id 对应）
+
+# 数据集说明
+# shape_1: 折纸步骤 1
+# shape_2: 折纸步骤 2
+# shape_3: 折纸步骤 3
+
+# 文件夹结构示例:
+# dataset/
+# ├── images/
+# │   ├── train/
+# │   │   ├── img001.jpg
+# │   │   ├── img002.jpg
+# │   │   └── ...
+# │   ├── val/
+# │   │   ├── img101.jpg
+# │   │   └── ...
+# │   └── test/
+# │       └── ...
+# └── labels/
+#     ├── train/
+#     │   ├── img001.txt
+#     │   ├── img002.txt
+#     │   └── ...
+#     ├── val/
+#     │   ├── img101.txt
+#     │   └── ...
+#     └── test/
+#         └── ...
+
+# 标注格式（每个 .txt 文件）：
+# <class_id> <x_center> <y_center> <width> <height>
+# 所有坐标都是归一化的（0-1）
+#
+# 示例：
+# 0 0.5 0.5 0.3 0.4
+# 表示：shape_1，中心在图片中心，宽30%，高40%

@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 3
+names: ['shape_1', 'shape_2', 'shape_3']
+
+roboflow:
+  workspace: drone-yzqy7
+  project: origami-detection
+  version: 4
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/drone-yzqy7/origami-detection/dataset/4

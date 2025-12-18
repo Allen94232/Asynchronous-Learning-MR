@@ -1,0 +1,2099 @@
+using UnityEngine;
+using Oculus.Avatar2;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.Serialization.Formatters.Binary;
+using Unity.Collections;
+using CAPI = Oculus.Avatar2.CAPI;
+using System.Text;
+using Debug = UnityEngine.Debug;
+using Process = System.Diagnostics.Process;
+using ProcessStartInfo = System.Diagnostics.ProcessStartInfo;
+
+/// <summary>
+/// 學�??�放管�???
+/// ?�於學�?端場?��?負責載入?�播?��?師�?製�?課�?
+/// </summary>
+public class StudentPlaybackManager : MonoBehaviour
+{
+    [Header("Avatar 設�?")]
+    [Tooltip("?�師 Avatar（播?��?製�?作�?")]
+    public OvrAvatarEntity teacherAvatar;
+    
+    [Tooltip("?�放 AudioSource（�?師聲?��?")]
+    public AudioSource teacherAudioSource;
+
+    [Header("?�放設�?")]
+    [Tooltip("?��?載入?�?�課�?)]
+    public bool autoLoadLatest = false;
+    
+    [Tooltip("?��??�製檔�?（空??= ?��?載入?�?��?案�?")]
+    public string targetRecordingName = "";
+    
+    [Tooltip("?�放?�度?��?")]
+    [Range(0.5f, 2f)]
+    public float playbackSpeed = 1f;
+    
+    [Tooltip("使用?�頻?��??�步?��?（修�?��?��??�製?��?移�?")]
+    public bool useAudioSync = true;
+
+    [Header("存�?設�?")]
+    [Tooltip("?�製檔�?路�?")]
+    public string recordingsFolderPath = "Assets/Recordings";
+
+    [Header("UI 設�?")]
+    [Tooltip("顯示調試訊息")]
+    public bool showDebugLogs = true;
+    
+    [Tooltip("?�螢幕顯示播?��???)]
+    public bool showPlaybackUI = true;
+    
+    [Header("步�??��?設�?")]
+    [Tooltip("?�用步�??��??�放（數字鍵?�放?��??��??�個步驟�?")]
+    public bool useStepGroups = false;
+    
+    [Tooltip("步�??��?定義（�? 1-9 對�??��? 1-9�?)]
+    public List<StepGroup> stepGroups = new List<StepGroup>();
+    
+    [Header("Avatar ?�放位置設�?")]
+    [Tooltip("?�用?��? TeacherAvatar 位置")]
+    public bool useCustomAvatarPosition = false;
+    
+    [Tooltip("TeacherAvatar ?��??�相機�??�移\nZ=?��?(�???, X=左右(�???, Y=上�?(�?�?")]
+    public Vector3 teacherAvatarOffset = new Vector3(0, 0, 1);
+    
+    [Tooltip("�?TeacherAvatar ?��?學�?（Camera�?)]
+    public bool faceStudent = true;
+    
+    [Tooltip("翻�??��?（�?左右?�正確�??��?")]
+    public bool flipMirror = true;
+    
+    [Tooltip("?�放?�隱?�摺紙�?示�?綠�?黃�?條�?")]
+    public bool hideOrigamiGuideInPlayback = true;
+    
+    [Header("Joystick ?�制設�?")]
+    [Tooltip("?�用 Joystick ?��??�制 Avatar 位置?��?�?)]
+    public bool enableJoystickControl = true;
+    
+    [Tooltip("左�??�制?��??�於?�制位置�?)]
+    public OVRInput.Controller leftController = OVRInput.Controller.LTouch;
+    
+    [Tooltip("?��??�制?��??�於?�制?��?�?)]
+    public OVRInput.Controller rightController = OVRInput.Controller.RTouch;
+    
+    [Tooltip("位置移�??�度（米/秒�?")]
+    public float positionMoveSpeed = 0.5f;
+    
+    [Tooltip("?��??�度（度/秒�?")]
+    public float rotationSpeed = 60f;
+    
+    [Tooltip("學�??��?（用?��?算�??��?")]
+    public Camera studentCamera;
+    
+    [Header("學�? Avatar ?��??�設�?)]
+    [Tooltip("?��?學�??�己??Avatar（MR ?�景?��??�己?��?�?)]
+    public bool hideLocalAvatar = true;
+    
+    [Tooltip("等�? Avatar ?��??��??�隱?��?秒�?")]
+    public float hideLocalAvatarDelay = 3f;
+    
+    [Header("形�?驗�?設�?")]
+    [Tooltip("?�用 YOLO 形�?驗�?")]
+    public bool enableShapeVerification = true;
+    
+    [Tooltip("Python ?��?檔路徑�??�空?�使?�系�?python�?)]
+    public string pythonExecutablePath = "python";
+    
+    [Tooltip("?�測?�本?��?路�?")]
+    public string detectionScriptPath = "Assets/share_model/detect_shapes.py";
+    
+    [Tooltip("YOLO 模�??��?路�?")]
+    public string modelPath = "Assets/share_model/best.pt";
+    
+    [Tooltip("?�測信�?度閾?��?0-1�?)]
+    [Range(0.1f, 1f)]
+    public float confidenceThreshold = 0.6f;
+    
+    [Tooltip("?��??��?路�?")]
+    public string screenshotPath = "Assets/Recordings/Screenshots";
+    
+    [Tooltip("驗�??��??��?（用?�截?�摺紙畫?��?")]
+    public Camera verificationCamera;
+
+    // === 私�?變數 ===
+    private OvrAvatarEntity localAvatar; // 學�??�本??Avatar
+    private AvatarRecordingData currentRecording;
+    private bool isPlaying = false;
+    private int playbackFrameIndex = 0;
+    private float playbackTimer = 0f;
+    private MonoBehaviour loopbackManager;
+    
+    // ?�步驟播?�相??
+    private bool isPlayingSingleStep = false;
+    private int singleStepIndex = -1;
+    private float singleStepEndTime = -1f;
+    private int currentPlayingGroupIndex = -1; // ?��??�放?��?組索�?
+
+    // === ?�製?��?結�?（使?�共享�??��?===
+
+    void Start()
+    {
+        // ?��?尋找組件
+        FindComponents();
+        
+        // ?��?載入?�?�課�?
+        if (autoLoadLatest)
+        {
+            string[] recordings = ListAvailableRecordings();
+            if (recordings.Length > 0)
+            {
+                LoadRecording(recordings[recordings.Length - 1]);
+            }
+        }
+        
+        // 延遲?�用 NetworkLoopbackManager，�? Avatar ?��??��???
+        if (loopbackManager != null)
+        {
+            StartCoroutine(DisableLoopbackAfterInit());
+        }
+        
+        // 延遲?��?學�???LocalAvatar（MR ?�景?��??�己?��?�?
+        if (hideLocalAvatar)
+        {
+            StartCoroutine(HideLocalAvatarAfterInit());
+        }
+    }
+    
+    /// <summary>
+    /// 延遲?�用 loopback 以�?�?Avatar ?��???
+    /// </summary>
+    System.Collections.IEnumerator DisableLoopbackAfterInit()
+    {
+        // 等�? 3 秒�? Avatar ?��??��???
+        yield return new WaitForSeconds(3f);
+        
+        // 確�? Avatar 已創�?
+        if (teacherAvatar != null && teacherAvatar.IsCreated)
+        {
+            loopbackManager.enabled = false;
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] Avatar ?��??��??��?已�???loopback");
+        }
+        else
+        {
+            // 如�??�未?��??��??��? 2 �?
+            yield return new WaitForSeconds(2f);
+            if (loopbackManager != null)
+            {
+                loopbackManager.enabled = false;
+                if (showDebugLogs)
+                    Debug.Log("[StudentPlayback] 強制?�用 loopback（延??5 秒�?");
+            }
+        }
+    }
+    
+    /// <summary>
+    /// 延遲?��? LocalAvatar（�?�?Meta Avatar 系統?��??��??��?
+    /// 使用 OvrAvatarEntity.Hidden 屬性�?不�??��? Avatar 系統?��?
+    /// </summary>
+    System.Collections.IEnumerator HideLocalAvatarAfterInit()
+    {
+        // 等�??��??��?�?Avatar ?��??��???
+        yield return new WaitForSeconds(hideLocalAvatarDelay);
+        
+        // 尋找 LocalAvatar
+        if (localAvatar == null)
+        {
+            localAvatar = GameObject.Find("LocalAvatar")?.GetComponent<OvrAvatarEntity>();
+        }
+        
+        if (localAvatar != null && localAvatar.IsCreated)
+        {
+            // 使用 Meta Avatar SDK ?�內�?Hidden 屬�?
+            // ?��??�叫 SetActiveView(None)，正確隱??Avatar ?��?影響系統?��?
+            localAvatar.Hidden = true;
+            
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] ??LocalAvatar 已隱?��?使用 OvrAvatarEntity.Hidden�?);
+        }
+        else if (localAvatar != null)
+        {
+            // 如�? Avatar 尚未?�建，�?等�?�?
+            yield return new WaitForSeconds(2f);
+            
+            if (localAvatar.IsCreated)
+            {
+                localAvatar.Hidden = true;
+                if (showDebugLogs)
+                    Debug.Log("[StudentPlayback] ??LocalAvatar 已隱?��?延遲後�?");
+            }
+            else
+            {
+                if (showDebugLogs)
+                    Debug.LogWarning("[StudentPlayback] ??LocalAvatar ?��??�失?��??��??��?");
+            }
+        }
+        else
+        {
+            if (showDebugLogs)
+                Debug.LogWarning("[StudentPlayback] ???��???LocalAvatar");
+        }
+    }
+
+
+    void FindComponents()
+    {
+        if (teacherAvatar == null)
+        {
+            // ?�學?�場?�中，TeacherAvatar ?�能??RemoteLoopbackAvatar ??TeacherAvatar
+            teacherAvatar = GameObject.Find("TeacherAvatar")?.GetComponent<OvrAvatarEntity>();
+            if (teacherAvatar == null)
+                teacherAvatar = GameObject.Find("RemoteLoopbackAvatar")?.GetComponent<OvrAvatarEntity>();
+        }
+        
+        if (teacherAudioSource == null && teacherAvatar != null)
+        {
+            teacherAudioSource = teacherAvatar.GetComponent<AudioSource>();
+            if (teacherAudioSource == null)
+            {
+                teacherAudioSource = teacherAvatar.gameObject.AddComponent<AudioSource>();
+                teacherAudioSource.spatialBlend = 1.0f; // 3D ?��?
+            }
+        }
+        
+        // 尋找 NetworkLoopbackManager（用?�控?�即?��?步�?
+        var loopbackObj = GameObject.Find("NetworkLoopbackManager");
+        if (loopbackObj != null)
+        {
+            loopbackManager = loopbackObj.GetComponent<MonoBehaviour>();
+        }
+    }
+
+    void Update()
+    {
+        // ?��??�盤快捷??
+        HandleKeyboardInput();
+        
+        if (isPlaying)
+        {
+            PlaybackFrame();
+        }
+        
+        // Joystick ?��??�制 Avatar 位置?��?�?
+        if (enableJoystickControl && teacherAvatar != null)
+        {
+            HandleJoystickControl();
+        }
+    }
+    
+    void HandleKeyboardInput()
+    {
+        // L ?��?載入?�?�課�?
+        if (Input.GetKeyDown(KeyCode.L) && !isPlaying)
+        {
+            LoadLatestRecording();
+        }
+
+        // P ?��??��?/?��?/繼�??�放
+        if (Input.GetKeyDown(KeyCode.P))
+        {
+            if (isPlaying)
+            {
+                // ?��??�放
+                StopPlayback();
+            }
+            else
+            {
+                // ?��?空�??��??�放?�?��??�當?��? C�?
+                CancelPlayback();
+                
+                // ?��?載入?�製（相?�於??L�?
+                if (showDebugLogs)
+                    Debug.Log("[StudentPlayback] ?��?載入?�製...");
+                LoadLatestRecording();
+                
+                // 確�?載入?��?後�??�放
+                if (currentRecording != null && currentRecording.frames.Count > 0)
+                {
+                    StartPlayback();
+                }
+            }
+        }
+        
+        // C ?��??��??�放並�?空�??��??�使步�??�放完畢也�?許�?消�?
+        if (Input.GetKeyDown(KeyCode.C))
+        {
+            // 檢查?�否?��?要�??��??�放?�??
+            if (isPlaying || isPlayingSingleStep || (teacherAvatar != null && !teacherAvatar.IsLocal))
+            {
+                CancelPlayback();
+            }
+        }
+        
+        // ?��???1-9：播?��?定步驟�?步�?�?
+        if (currentRecording != null && currentRecording.origamiStepEvents.Count > 0)
+        {
+            for (int i = 1; i <= 9; i++)
+            {
+                if (Input.GetKeyDown(KeyCode.Alpha0 + i) || Input.GetKeyDown(KeyCode.Keypad0 + i))
+                {
+                    if (useStepGroups && stepGroups.Count >= i)
+                    {
+                        // ?�放步�?�?
+                        PlayStepGroup(i - 1); // ?��?索�?�?0 ?��?
+                    }
+                    else
+                    {
+                        // ?�放?�個步�?
+                        PlaySingleStep(i - 1); // 步�?索�?�?0 ?��?
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // ==================== ?�放?�能 ====================
+    
+    public void StartPlayback()
+    {
+        // **修正：�? AvatarRecordingManager 一?��?不�??�這裡?�叫 CancelPlayback**
+        // CancelPlayback ?�破�?Avatar ?�?��??�該?�用?��?確�? C ?�呼??
+        
+        if (currentRecording == null || currentRecording.frames.Count == 0)
+        {
+            Debug.LogError("[StudentPlayback] 沒�??�播?��?課�?");
+            return;
+        }
+        
+        if (teacherAvatar == null || !teacherAvatar.IsCreated)
+        {
+            Debug.LogError("[StudentPlayback] TeacherAvatar ?��??�好");
+            return;
+        }
+        
+        // **?�鍵修正：�??�用一幀?��??��???Avatar，�??�用?�步**
+        if (currentRecording.frames.Count > 0 && currentRecording.frames[0].avatarStreamData != null)
+        {
+            // ?�設置為?�端模�?
+            teacherAvatar.SetIsLocal(false);
+            
+            // 立即?�用第�?幀?��?，�?始�? Avatar LOD ?�渲?��???
+            NativeArray<byte> initData = new NativeArray<byte>(currentRecording.frames[0].avatarStreamData, Allocator.Temp);
+            try
+            {
+                teacherAvatar.ApplyStreamData(initData);
+                if (showDebugLogs)
+                    Debug.Log("[StudentPlayback] ??TeacherAvatar ?��??��???);
+            }
+            finally
+            {
+                initData.Dispose();
+            }
+        }
+        
+        // ?�在?�以安全?��??�即?��?�?
+        if (loopbackManager != null)
+        {
+            loopbackManager.enabled = false;
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] 已�?止即?��?�?);
+        }
+        
+        // 設置?�放?�頻
+        if (teacherAudioSource != null && currentRecording.audioSamples.Count > 0)
+        {
+            // ?�止之�??�音?��?如�??��?
+            if (teacherAudioSource.isPlaying)
+            {
+                teacherAudioSource.Stop();
+            }
+            
+            // ?�新?�建 AudioClip 確�?從頭?��??�放
+            int sampleCount = currentRecording.audioSamples.Count / currentRecording.audioChannels;
+            AudioClip audioClip = AudioClip.Create(
+                "TeacherVoice",
+                sampleCount,
+                currentRecording.audioChannels,
+                currentRecording.audioSampleRate,
+                false
+            );
+            audioClip.SetData(currentRecording.audioSamples.ToArray(), 0);
+            teacherAudioSource.clip = audioClip;
+            teacherAudioSource.time = 0f;  // 確�?從頭?��?
+            teacherAudioSource.Play();
+            
+            if (showDebugLogs)
+                Debug.Log($"[StudentPlayback] ???�頻已設�? {sampleCount} �?��, {currentRecording.audioChannels} ?��?, {currentRecording.audioSampleRate} Hz");
+        }
+        
+        isPlaying = true;
+        playbackFrameIndex = 0;
+        
+        // **?�鍵修正：�?第�?幀??timestamp 作為起�?（歸?��?**
+        playbackTimer = currentRecording.frames[0].timestamp;
+        
+        // **?�步?�頻?�放位置?�第一幀?��???*
+        if (teacherAudioSource != null && teacherAudioSource.clip != null)
+        {
+            teacherAudioSource.time = currentRecording.frames[0].timestamp;
+            if (showDebugLogs)
+                Debug.Log($"[StudentPlayback] ?�頻?�放位置設�??? {teacherAudioSource.time:F3}s");
+        }
+        
+        if (showDebugLogs)
+        {
+            Debug.Log($"[StudentPlayback] ???��??�放課�?: {currentRecording.recordingName}");
+            Debug.Log($"[StudentPlayback] 總�??? {currentRecording.frames.Count}, ?�長: {currentRecording.duration:F2}s");
+            Debug.Log($"[StudentPlayback] playbackTimer 起�?: {playbackTimer:F3}s");
+        }
+    }
+    
+    public void StopPlayback()
+    {
+        if (!isPlaying)
+            return;
+        
+        isPlaying = false;
+        
+        // ?��??�頻?�放（�??��?置�? clip�?
+        if (teacherAudioSource != null && teacherAudioSource.isPlaying)
+        {
+            teacherAudioSource.Pause();
+        }
+        
+        // 保�? Avatar ?��?端模式�??�樣下次?�放?�可以繼續接?�數??
+        // 不�??�這裡?�復?�地模�?，否?��?次播?��??��?
+        
+        if (showDebugLogs)
+            Debug.Log($"[StudentPlayback] ???��??�放 (幀: {playbackFrameIndex}/{currentRecording.frames.Count})");
+    }
+    
+    /// <summary>
+    /// 完全?�止?�放並恢復即?��?�?
+    /// </summary>
+    void CompletelyStopPlayback()
+    {
+        isPlaying = false;
+        
+        // **修正：添?�單步�??�放標�??�置（�? AvatarRecordingManager 一?��?**
+        isPlayingSingleStep = false;
+        singleStepIndex = -1;
+        singleStepEndTime = -1f;
+        
+        // ?�止?�頻?�放
+        if (teacherAudioSource != null)
+        {
+            teacherAudioSource.Stop();
+            teacherAudioSource.clip = null;
+        }
+        
+        // **?��?**：�??�用 loopbackManager
+        if (loopbackManager != null)
+        {
+            loopbackManager.enabled = false;
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] 已�???loopbackManager");
+        }
+        
+        // **?�置 Avatar ?�放?�??*：�??��?作緩衝�?
+        if (teacherAvatar != null && teacherAvatar.IsCreated && !teacherAvatar.IsLocal)
+        {
+            teacherAvatar.SetIsLocal(true);
+            teacherAvatar.SetIsLocal(false);
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] 已�?�?Avatar ?�放?�??);
+        }
+        
+        if (showDebugLogs)
+            Debug.Log("[StudentPlayback] 完全?�止?�放");
+    }
+    
+    public void RestartPlayback()
+    {
+        // ?��?止當?�播??
+        if (isPlaying)
+        {
+            isPlaying = false;
+            if (teacherAudioSource != null)
+            {
+                teacherAudioSource.Stop();
+            }
+        }
+        
+        // ?�置?�放?�??
+        playbackFrameIndex = 0;
+        playbackTimer = currentRecording.frames[0].timestamp;
+        
+        // ?�新?��??�放
+        StartPlayback();
+        
+        if (showDebugLogs)
+            Debug.Log("[StudentPlayback] ?? ?�新?�放課�?");
+    }
+    
+    /// <summary>
+    /// ?�放?��??�單?�步�?
+    /// </summary>
+    public void PlaySingleStep(int stepIndex)
+    {
+        // ?��?空�??��??�放?�?��??�當?��? C�?
+        CancelPlayback();
+        
+        // ?��?載入?�製（相?�於??L�?
+        if (showDebugLogs)
+            Debug.Log("[StudentPlayback] ?��?載入?�製...");
+        LoadLatestRecording();
+        
+        // 確�??�可?�放?�數??
+        if (currentRecording == null || currentRecording.origamiStepEvents.Count == 0)
+        {
+            Debug.LogError("[StudentPlayback] 沒�??�播?��??�製?��??�步驟�?�?);
+            return;
+        }
+        
+        if (stepIndex < 0 || stepIndex >= currentRecording.origamiStepEvents.Count)
+        {
+            Debug.LogError($"[StudentPlayback] 步�?索�?超出範�?: {stepIndex} (??{currentRecording.origamiStepEvents.Count} ?�步�?");
+            return;
+        }
+        
+        // ?��? OrigamiStepGuideSimple 來�?得步驟�? duration（可?��?
+        var stepGuide = FindFirstObjectByType<OrigamiStepGuideSimple>();
+        float stepDuration = 10f; // ?�設?��??��?
+        
+        if (stepGuide != null && stepGuide.steps.Count > stepIndex)
+        {
+            stepDuration = stepGuide.steps[stepIndex].duration;
+        }
+        else if (showDebugLogs)
+        {
+            Debug.LogWarning($"[StudentPlayback] ?��???OrigamiStepGuideSimple，使?��?設�?續�???{stepDuration}s");
+        }
+        
+        // 計�?步�??��??��?
+        float stepStartTime;
+        if (stepIndex == 0)
+        {
+            // 第�??�步驟�? 0 秒�?�?
+            stepStartTime = 0f;
+        }
+        else
+        {
+            // ?��?步�?從�?一?�步驟�??��??��?
+            // ?��??�步驟�??��???= ?��??�步驟�?始�???+ ?��??�步驟�?續�???
+            float prevStepStartTime = currentRecording.origamiStepEvents[stepIndex - 1].timestamp;
+            float prevStepDuration = (stepGuide != null && stepGuide.steps.Count > stepIndex - 1) 
+                ? stepGuide.steps[stepIndex - 1].duration 
+                : stepDuration; // 使用?��??��?設�?續�???
+            stepStartTime = prevStepStartTime + prevStepDuration;
+        }
+        
+        // 步�?結�??��?
+        float stepEndTime;
+        if (stepIndex + 1 >= currentRecording.origamiStepEvents.Count)
+        {
+            // ?�到?�個�?製�???
+            stepEndTime = currentRecording.duration;
+        }
+        else
+        {
+            // 結�??��? = 該步驟�?始�???+ 步�??��??��?
+            stepEndTime = currentRecording.origamiStepEvents[stepIndex].timestamp + stepDuration;
+        }
+        
+        if (showDebugLogs)
+        {
+            Debug.Log($"[StudentPlayback] ?�放步�? {stepIndex + 1}: {stepStartTime:F2}s - {stepEndTime:F2}s (?��? {stepDuration:F2}s)");
+        }
+        
+        // 設置?�步驟播?��?�?
+        isPlayingSingleStep = true;
+        singleStepIndex = stepIndex;
+        singleStepEndTime = stepEndTime;
+        
+        // 如�?�?��?�放，�??�止（�?不�?置�??��?
+        bool wasPlaying = isPlaying;
+        if (isPlaying)
+        {
+            isPlaying = false; // ?��??�止以避??StartPlayback 衝�?
+        }
+        
+        // ?�復?�放?�?��??�要在 JumpToTime 之�?設置，�???JumpToTime 檢查 isPlaying�?
+        isPlaying = true;
+        
+        // ?��??�播?�環境�??��?之�??�否?�放�?
+        if (teacherAvatar == null || !teacherAvatar.IsCreated)
+        {
+            Debug.LogError($"[StudentPlayback] TeacherAvatar ?��??�好 - teacherAvatar: {(teacherAvatar == null ? "null" : "exists")}, IsCreated: {(teacherAvatar != null ? teacherAvatar.IsCreated.ToString() : "N/A")}");
+            isPlaying = false;
+            return;
+        }
+        
+        // **?��?**：�??�用 loopbackManager，�?設置 Avatar 模�?
+        // ?�確�?loopbackManager 不�??�設置�?程中?�試?�送數??
+        if (loopbackManager != null)
+        {
+            loopbackManager.enabled = false;
+        }
+        
+        // 確�? Avatar ?��?端模�?
+        if (teacherAvatar.IsLocal)
+        {
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] Avatar ?��??�本?�模式�??��??��?端模�?..");
+            teacherAvatar.SetIsLocal(false);
+        }
+        
+        if (showDebugLogs)
+            Debug.Log($"[StudentPlayback] Avatar ?�?? IsLocal={teacherAvatar.IsLocal}, IsCreated={teacherAvatar.IsCreated}");
+        
+        // 設置?�放?�頻
+        if (teacherAudioSource != null && currentRecording.audioSamples.Count > 0)
+        {
+            if (teacherAudioSource.clip == null)
+            {
+                int sampleCount = currentRecording.audioSamples.Count / currentRecording.audioChannels;
+                AudioClip audioClip = AudioClip.Create(
+                    "TeacherVoice",
+                    sampleCount,
+                    currentRecording.audioChannels,
+                    currentRecording.audioSampleRate,
+                    false
+                );
+                audioClip.SetData(currentRecording.audioSamples.ToArray(), 0);
+                teacherAudioSource.clip = audioClip;
+            }
+        }
+        
+        // 跳�??�步驟�?始�???
+        JumpToTime(stepStartTime);
+        
+        // 強制?�用起�?幀??Avatar ?��?以確�?Avatar 不�??�在之�??�姿??
+        int startFrameIndex = FindFrameByTime(stepStartTime);
+        if (startFrameIndex >= 0 && startFrameIndex < currentRecording.frames.Count)
+        {
+            AvatarFrameData startFrame = currentRecording.frames[startFrameIndex];
+            if (startFrame.avatarStreamData != null && startFrame.avatarStreamData.Length > 0)
+            {
+                ApplyAvatarStream(startFrame.avatarStreamData);
+                if (showDebugLogs)
+                    Debug.Log($"[StudentPlayback] 強制?�用起�?幀 {startFrameIndex} ??Avatar ?��?");
+            }
+        }
+        
+        // 確�??�頻�?��?�放
+        if (teacherAudioSource != null && teacherAudioSource.clip != null)
+        {
+            if (!teacherAudioSource.isPlaying)
+            {
+                teacherAudioSource.time = stepStartTime;
+                teacherAudioSource.Play();
+            }
+        }
+        
+        // 設�? TeacherAvatar 位置?��???
+        SetTeacherAvatarPositionAndRotation();
+        
+        // ?��??��??�示?�顯�??��?
+        if (hideOrigamiGuideInPlayback && stepGuide != null)
+        {
+            stepGuide.HideGuidelines();
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] 已隱?�摺紙�?�?);
+        }
+    }
+    
+    /// <summary>
+    /// ?��??�放並�?空�??��??��??��??��?
+    /// </summary>
+    public void CancelPlayback()
+    {
+        // ?�使 isPlaying ??false 也�?許�?消�??�為?�能?�播?��?步�??�在??��
+        if (!isPlaying && showDebugLogs)
+        {
+            Debug.Log("[StudentPlayback] isPlaying=false，�?仍執行�??�以?�復?��??�步");
+        }
+        
+        // ?�止?�放
+        isPlaying = false;
+        
+        // ?�止?�頻
+        if (teacherAudioSource != null)
+        {
+            teacherAudioSource.Stop();
+            teacherAudioSource.clip = null;
+        }
+        
+        // **?��?**：�??�用 loopbackManager，確保�?不�???Avatar ?�?��??��??�送數??
+        if (loopbackManager != null)
+        {
+            loopbackManager.enabled = false;
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] 已�???loopbackManager");
+        }
+        
+        // **?�置 Avatar ?�放?�??*：通�? SetIsLocal(true) ??SetIsLocal(false) 清除?�放緩�??�
+        // ?��?調用 PlaybackStop ?��? PlaybackStart，�??��??��?作數??
+        if (teacherAvatar != null && teacherAvatar.IsCreated)
+        {
+            if (!teacherAvatar.IsLocal)
+            {
+                // ?��??�本?�模式�??�止?�放，�??�緩衝�?�?
+                teacherAvatar.SetIsLocal(true);
+                // ?��??��?端模式�??�新?��??�放�?
+                teacherAvatar.SetIsLocal(false);
+                if (showDebugLogs)
+                    Debug.Log("[StudentPlayback] 已�?�?Avatar ?�放?�?��?清除?��?緩�??��?);
+            }
+        }
+        
+        // 不�?置�?張�??��?保�??�當?��?�?
+        // ?�戶希�??�播?��?張�?跳�??��?
+        
+        // ?�置?�部?�??
+        playbackFrameIndex = 0;
+        playbackTimer = 0f;
+        lastSyncedStep = -1;
+        
+        // ?�置?�步驟播?��?�?
+        isPlayingSingleStep = false;
+        singleStepIndex = -1;
+        singleStepEndTime = -1f;
+        
+        // ?�復?��??�示
+        if (hideOrigamiGuideInPlayback)
+        {
+            var stepGuide = FindFirstObjectByType<OrigamiStepGuideSimple>();
+            if (stepGuide != null)
+            {
+                stepGuide.ShowGuidelines();
+                if (showDebugLogs)
+                    Debug.Log("[StudentPlayback] 已恢復摺紙�?�?);
+            }
+        }
+        
+        if (showDebugLogs)
+            Debug.Log("[StudentPlayback] ??已�?消播?�並?�置?�?��???);
+    }
+    
+    /// <summary>
+    /// ?�放步�?組�?????�放多個步驟�?
+    /// </summary>
+    public void PlayStepGroup(int groupIndex)
+    {
+        // ?��?空�??��??�放?�?��??�當?��? C�?
+        CancelPlayback();
+        
+        // ?��?載入?�製（相?�於??L�?
+        if (showDebugLogs)
+            Debug.Log("[StudentPlayback] ?��?載入?�製...");
+        LoadLatestRecording();
+        
+        // 確�??�可?�放?�數??
+        if (currentRecording == null || currentRecording.origamiStepEvents.Count == 0)
+        {
+            Debug.LogError("[StudentPlayback] 沒�??�播?��??�製?��??�步驟�?�?);
+            return;
+        }
+        
+        if (groupIndex < 0 || groupIndex >= stepGroups.Count)
+        {
+            Debug.LogError($"[StudentPlayback] ?��?索�?超出範�?: {groupIndex} (??{stepGroups.Count} ?��?�?");
+            return;
+        }
+        
+        StepGroup group = stepGroups[groupIndex];
+        
+        if (group.stepIndices == null || group.stepIndices.Count == 0)
+        {
+            Debug.LogError($"[StudentPlayback] ?��? '{group.groupName}' 沒�??�含任�?步�?");
+            return;
+        }
+        
+        // 驗�??�?�步驟索�?
+        foreach (int stepIdx in group.stepIndices)
+        {
+            if (stepIdx < 0 || stepIdx >= currentRecording.origamiStepEvents.Count)
+            {
+                Debug.LogError($"[StudentPlayback] ?��? '{group.groupName}' ?�含?��?步�?索�?: {stepIdx}");
+                return;
+            }
+        }
+        
+        // ?��? OrigamiStepGuideSimple（可?��?
+        var stepGuide = FindFirstObjectByType<OrigamiStepGuideSimple>();
+        if (stepGuide == null && showDebugLogs)
+        {
+            Debug.LogWarning("[StudentPlayback] ?��???OrigamiStepGuideSimple，�?使用?�製?��?中�??��??��?算�?組�???);
+        }
+        
+        // 計�??��??��?始�?結�??��?
+        int firstStepIdx = group.stepIndices[0];
+        int lastStepIdx = group.stepIndices[group.stepIndices.Count - 1];
+        
+        // 第�??�步驟�??��??��?
+        float groupStartTime;
+        if (firstStepIdx == 0)
+        {
+            groupStartTime = 0f;
+        }
+        else
+        {
+            float prevStepStartTime = currentRecording.origamiStepEvents[firstStepIdx - 1].timestamp;
+            float prevStepDuration = (stepGuide != null && stepGuide.steps.Count > firstStepIdx - 1) 
+                ? stepGuide.steps[firstStepIdx - 1].duration 
+                : 10f; // ?�設?��??��?
+            groupStartTime = prevStepStartTime + prevStepDuration;
+        }
+        
+        // ?�後�??�步驟�?結�??��?
+        float groupEndTime;
+        if (lastStepIdx + 1 >= currentRecording.origamiStepEvents.Count)
+        {
+            groupEndTime = currentRecording.duration;
+        }
+        else
+        {
+            float lastStepStartTime = currentRecording.origamiStepEvents[lastStepIdx].timestamp;
+            float lastStepDuration = (stepGuide != null && stepGuide.steps.Count > lastStepIdx) 
+                ? stepGuide.steps[lastStepIdx].duration 
+                : 10f; // ?�設?��??��?
+            groupEndTime = lastStepStartTime + lastStepDuration;
+        }
+        
+        if (showDebugLogs)
+        {
+            string stepList = string.Join(", ", group.stepIndices.ConvertAll(x => (x + 1).ToString()));
+            Debug.Log($"[StudentPlayback] ?�放?��? '{group.groupName}' (步�? {stepList}): {groupStartTime:F2}s - {groupEndTime:F2}s");
+        }
+        
+        // 設置?�步驟播?��?記�?實�?上是?��??�放�?
+        isPlayingSingleStep = true;
+        singleStepIndex = firstStepIdx; // 記�?第�??�步驟索�?
+        singleStepEndTime = groupEndTime;
+        currentPlayingGroupIndex = groupIndex; // 記�??��??��?
+        
+        // 如�?�?��?�放，�??�止
+        bool wasPlaying = isPlaying;
+        if (isPlaying)
+        {
+            isPlaying = false;
+        }
+        
+        // ?�復?�放?�??
+        isPlaying = true;
+        
+        // ?��??�播?�環�?
+        if (teacherAvatar == null || !teacherAvatar.IsCreated)
+        {
+            Debug.LogError($"[StudentPlayback] TeacherAvatar ?��??�好 - teacherAvatar: {(teacherAvatar == null ? "null" : "exists")}, IsCreated: {(teacherAvatar != null ? teacherAvatar.IsCreated.ToString() : "N/A")}");
+            isPlaying = false;
+            return;
+        }
+        
+        // **?��?**：�??�用 loopbackManager，�?設置 Avatar 模�?
+        if (loopbackManager != null)
+        {
+            loopbackManager.enabled = false;
+        }
+        
+        // 確�? Avatar ?��?端模�?
+        if (teacherAvatar.IsLocal)
+        {
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] Avatar ?��??�本?�模式�??��??��?端模�?..");
+            teacherAvatar.SetIsLocal(false);
+        }
+        
+        if (showDebugLogs)
+            Debug.Log($"[StudentPlayback] Avatar ?�?? IsLocal={teacherAvatar.IsLocal}, IsCreated={teacherAvatar.IsCreated}");
+        
+        // 設置?�放?�頻
+        if (teacherAudioSource != null && currentRecording.audioSamples.Count > 0)
+        {
+            if (teacherAudioSource.clip == null)
+            {
+                int sampleCount = currentRecording.audioSamples.Count / currentRecording.audioChannels;
+                AudioClip audioClip = AudioClip.Create(
+                    "TeacherVoice",
+                    sampleCount,
+                    currentRecording.audioChannels,
+                    currentRecording.audioSampleRate,
+                    false
+                );
+                audioClip.SetData(currentRecording.audioSamples.ToArray(), 0);
+                teacherAudioSource.clip = audioClip;
+            }
+        }
+        
+        // 跳�??��?組�?始�???
+        JumpToTime(groupStartTime);
+        
+        // 強制?�用起�?幀??Avatar ?��?
+        int startFrameIndex = FindFrameByTime(groupStartTime);
+        if (startFrameIndex >= 0 && startFrameIndex < currentRecording.frames.Count)
+        {
+            AvatarFrameData startFrame = currentRecording.frames[startFrameIndex];
+            if (startFrame.avatarStreamData != null && startFrame.avatarStreamData.Length > 0)
+            {
+                ApplyAvatarStream(startFrame.avatarStreamData);
+                if (showDebugLogs)
+                    Debug.Log($"[StudentPlayback] 強制?�用起�?幀 {startFrameIndex} ??Avatar ?��?");
+            }
+        }
+        
+        // 確�??�頻�?��?�放
+        if (teacherAudioSource != null && teacherAudioSource.clip != null)
+        {
+            if (!teacherAudioSource.isPlaying)
+            {
+                teacherAudioSource.time = groupStartTime;
+                teacherAudioSource.Play();
+            }
+        }
+        
+        // 設�? TeacherAvatar 位置?��???
+        SetTeacherAvatarPositionAndRotation();
+        
+        // ?��??��??�示?�顯�??��?
+        if (hideOrigamiGuideInPlayback && stepGuide != null)
+        {
+            stepGuide.HideGuidelines();
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] 已隱?�摺紙�?�?);
+        }
+    }
+    
+    /// <summary>
+    /// ?�放上�??�步驟�?
+    /// </summary>
+    public void PlayPreviousStepGroup()
+    {
+        if (!useStepGroups || stepGroups.Count == 0)
+        {
+            Debug.LogWarning("[StudentPlayback] 步�??��??��??��?沒�??��?");
+            return;
+        }
+        
+        int targetGroupIndex = currentPlayingGroupIndex - 1;
+        if (targetGroupIndex < 0)
+            targetGroupIndex = stepGroups.Count - 1; // 循環?��?後�???
+        
+        if (showDebugLogs)
+            Debug.Log($"[StudentPlayback] ?�放上�??��?�? {targetGroupIndex + 1}");
+        
+        PlayStepGroup(targetGroupIndex);
+    }
+    
+    /// <summary>
+    /// ?�播?��?步�?�?
+    /// </summary>
+    public void ReplayCurrentStepGroup()
+    {
+        if (!useStepGroups || stepGroups.Count == 0)
+        {
+            Debug.LogWarning("[StudentPlayback] 步�??��??��??��?沒�??��?");
+            return;
+        }
+        
+        if (currentPlayingGroupIndex < 0)
+        {
+            // 如�??��??�播?��?，播?�第一??
+            currentPlayingGroupIndex = 0;
+        }
+        
+        if (showDebugLogs)
+            Debug.Log($"[StudentPlayback] ?�播?��??��?: {currentPlayingGroupIndex + 1}");
+        
+        PlayStepGroup(currentPlayingGroupIndex);
+    }
+    
+    /// <summary>
+    /// ?�放下�??�步驟�?
+    /// </summary>
+    public void PlayNextStepGroup()
+    {
+        if (!useStepGroups || stepGroups.Count == 0)
+        {
+            Debug.LogWarning("[StudentPlayback] 步�??��??��??��?沒�??��?");
+            return;
+        }
+        
+        int targetGroupIndex = currentPlayingGroupIndex + 1;
+        if (targetGroupIndex >= stepGroups.Count)
+            targetGroupIndex = 0; // 循環?�第一??
+        
+        if (showDebugLogs)
+            Debug.Log($"[StudentPlayback] ?�放下�??��?�? {targetGroupIndex + 1}");
+        
+        PlayStepGroup(targetGroupIndex);
+    }
+    
+    /// <summary>
+    /// ?��? Joystick ?�制 Avatar 位置?��?�?
+    /// </summary>
+    void HandleJoystickControl()
+    {
+        // 左�? Joystick ?�制位置
+        Vector2 leftStick = OVRInput.Get(OVRInput.Axis2D.PrimaryThumbstick, leftController);
+        if (leftStick.sqrMagnitude > 0.01f)
+        {
+            // ?��??�相機方?�移??
+            Vector3 moveDirection = Vector3.zero;
+            
+            if (studentCamera != null)
+            {
+                // X 軸�?左右移�?
+                moveDirection += studentCamera.transform.right * leftStick.x;
+                // Y 軸�??��?移�?
+                moveDirection += studentCamera.transform.forward * leftStick.y;
+                moveDirection.y = 0; // 保�??�水平面
+                moveDirection = moveDirection.normalized;
+            }
+            else
+            {
+                // 如�?沒�??��?，使?�全局?��?
+                moveDirection = new Vector3(leftStick.x, 0, leftStick.y);
+            }
+            
+            teacherAvatar.transform.position += moveDirection * positionMoveSpeed * Time.deltaTime;
+        }
+        
+        // ?��? Joystick ?�制?��?
+        Vector2 rightStick = OVRInput.Get(OVRInput.Axis2D.PrimaryThumbstick, rightController);
+        if (Mathf.Abs(rightStick.x) > 0.01f)
+        {
+            // 水平?��?（Y 軸�?
+            float rotationAmount = rightStick.x * rotationSpeed * Time.deltaTime;
+            teacherAvatar.transform.Rotate(0, rotationAmount, 0, Space.World);
+        }
+    }
+    
+    /// <summary>
+    /// 設�? TeacherAvatar ?��?置�??��?（相對於?��?�?
+    /// </summary>
+    void SetTeacherAvatarPositionAndRotation()
+    {
+        if (!useCustomAvatarPosition || teacherAvatar == null)
+            return;
+        
+        // 確�??�相機�???
+        if (studentCamera == null)
+            studentCamera = Camera.main;
+        
+        if (studentCamera == null)
+        {
+            Debug.LogWarning("[StudentPlayback] ?��??�學?�相機�??��?設�? TeacherAvatar 位置");
+            return;
+        }
+        
+        // 計�??��??�相機�?世�?位置（�? OrigamiSyncController ?��??�輯�?
+        // teacherAvatarOffset.z = ?��?（正??= ?�方�?
+        // teacherAvatarOffset.x = 左右（正??= ?�方�?
+        // teacherAvatarOffset.y = 上�?（正??= 下方，�??�使??TransformDirection(Vector3.down)�?
+        Vector3 worldPosition = studentCamera.transform.position + 
+                               studentCamera.transform.forward * teacherAvatarOffset.z +
+                               studentCamera.transform.right * teacherAvatarOffset.x +
+                               studentCamera.transform.TransformDirection(Vector3.down) * teacherAvatarOffset.y;
+        
+        teacherAvatar.transform.position = worldPosition;
+        
+        // 設�??��?（面?�學?��?
+        if (faceStudent)
+        {
+            Vector3 directionToStudent = studentCamera.transform.position - teacherAvatar.transform.position;
+            directionToStudent.y = 0; // ?�在水平?��?�?
+            if (directionToStudent.sqrMagnitude > 0.001f)
+            {
+                Quaternion lookRotation = Quaternion.LookRotation(directionToStudent);
+                teacherAvatar.transform.rotation = lookRotation;
+            }
+        }
+        
+        // 翻�??��?（修�?��?��?對�?�?
+        if (flipMirror)
+        {
+            // 翻�? X �?scale，這樣左右?��?�?��對�?
+            Vector3 scale = teacherAvatar.transform.localScale;
+            scale.x = -Mathf.Abs(scale.x); // 確�? X ?��???
+            teacherAvatar.transform.localScale = scale;
+            
+            // ?�為 scale.x ?��??��??��?）�?LookRotation ?�方?��?顛�?
+            // ?�要�?�?180 度�?修正
+            if (faceStudent)
+            {
+                teacherAvatar.transform.Rotate(0, 180f, 0);
+            }
+        }
+        else
+        {
+            // ?�復�?�� scale
+            Vector3 scale = teacherAvatar.transform.localScale;
+            scale.x = Mathf.Abs(scale.x); // 確�? X ?�正??
+            teacherAvatar.transform.localScale = scale;
+        }
+        
+        if (showDebugLogs)
+            Debug.Log($"[StudentPlayback] TeacherAvatar 位置: {teacherAvatar.transform.position} (?��??�移: {teacherAvatarOffset}), ?��?: {teacherAvatar.transform.eulerAngles}, ?��?翻�?: {flipMirror}");
+    }
+    
+    void PlaybackFrame()
+    {
+        if (playbackFrameIndex >= currentRecording.frames.Count)
+        {
+            // ?�放完畢，�??��?止並?�復?��??�步
+            CompletelyStopPlayback();
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] ???�放完畢");
+            return;
+        }
+        
+        // 檢查?�步驟播?�是?��???
+        if (isPlayingSingleStep)
+        {
+            float currentTime = useAudioSync && teacherAudioSource != null && teacherAudioSource.isPlaying
+                ? teacherAudioSource.time
+                : playbackTimer;
+            
+            if (currentTime >= singleStepEndTime)
+            {
+                if (showDebugLogs)
+                    Debug.Log($"[StudentPlayback] ??步�? {singleStepIndex + 1} ?�放完畢，�???{currentTime:F2}s");
+                
+                // ?�止?�放但�??�在?��?位置（�??�置?�?��?
+                StopPlayback();
+                
+                // ?�置?�步驟播?��?�?
+                isPlayingSingleStep = false;
+                singleStepIndex = -1;
+                singleStepEndTime = -1f;
+                
+                return;
+            }
+        }
+        
+        // 使用?�頻?�步模�?
+        if (useAudioSync && teacherAudioSource != null && teacherAudioSource.isPlaying)
+        {
+            // 使用?�頻?�實?�播?��??��??�基�?
+            float audioTime = teacherAudioSource.time;
+            
+            // ?�找?�?��??��??�頻?��??��?
+            int targetFrameIndex = FindFrameByTime(audioTime);
+            
+            // 如�??�到?��??��?索�?
+            if (targetFrameIndex >= 0 && targetFrameIndex < currentRecording.frames.Count)
+            {
+                // ?�新幀索�?
+                playbackFrameIndex = targetFrameIndex;
+                
+                // ?�用 Avatar ?��?（�?幀?��??�以?��??��?/?��?跳�?�?
+                AvatarFrameData frame = currentRecording.frames[playbackFrameIndex];
+                if (frame.avatarStreamData != null && frame.avatarStreamData.Length > 0)
+                {
+                    ApplyAvatarStream(frame.avatarStreamData);
+                }
+                
+                // ?�步?��?步�?（�?幀?��?步以確�? Alembic ?��??�新�?
+                SyncOrigamiStep(audioTime);
+                
+                // �?60 幀顯示一次�?步�???
+                if (showDebugLogs && playbackFrameIndex % 60 == 0)
+                {
+                    Debug.Log($"[StudentPlayback] ?�頻?�步: ?�頻?��? {audioTime:F3}s ??幀 {playbackFrameIndex}/{currentRecording.frames.Count}");
+                }
+            }
+        }
+        else
+        {
+            // ?�統模�?：使??playbackTimer
+            AvatarFrameData frame = currentRecording.frames[playbackFrameIndex];
+            
+            // 等�?�?��?��??��?
+            if (playbackTimer < frame.timestamp)
+            {
+                playbackTimer += Time.deltaTime;
+                return;
+            }
+            
+            // ?�用 Avatar 串�??��?
+            if (frame.avatarStreamData != null && frame.avatarStreamData.Length > 0)
+            {
+                ApplyAvatarStream(frame.avatarStreamData);
+            }
+            else if (showDebugLogs && playbackFrameIndex % 30 == 0)
+            {
+                Debug.LogWarning($"[StudentPlayback] �?{playbackFrameIndex} 幀沒�??��??��?");
+            }
+            
+            // ?�步?��?步�?
+            SyncOrigamiStep(frame.timestamp);
+            
+            playbackFrameIndex++;
+            playbackTimer += Time.deltaTime;
+            
+            // �?30 幀顯示一次進度
+            if (showDebugLogs && playbackFrameIndex % 30 == 0)
+            {
+                Debug.Log($"[StudentPlayback] ?�放?�度: {playbackFrameIndex}/{currentRecording.frames.Count}");
+            }
+        }
+    }
+    
+    void ApplyAvatarStream(byte[] streamData)
+    {
+        if (streamData == null || streamData.Length == 0)
+        {
+            if (showDebugLogs)
+                Debug.LogWarning("[StudentPlayback] 串�??��??�空");
+            return;
+        }
+        
+        if (teacherAvatar == null || !teacherAvatar.IsCreated)
+        {
+            if (showDebugLogs)
+                Debug.LogWarning("[StudentPlayback] TeacherAvatar ?�創�?);
+            return;
+        }
+        
+        // 使用 Meta Avatar SDK ?�用串�??��?
+        // ?�要�? byte[] 轉�???NativeArray
+        NativeArray<byte> nativeData = new NativeArray<byte>(streamData, Allocator.Temp);
+        
+        try
+        {
+            bool success = teacherAvatar.ApplyStreamData(nativeData);
+            
+            if (showDebugLogs)
+            {
+                if (success)
+                {
+                    Debug.Log($"[StudentPlayback] ???�用串�??��??��? ({streamData.Length} bytes)");
+                }
+                else
+                {
+                    Debug.LogWarning($"[StudentPlayback] ???�用串�??��?失�?");
+                }
+            }
+        }
+        finally
+        {
+            nativeData.Dispose();
+        }
+    }
+    
+    // ?�頻?�放已改?�在 StartPlayback ?�設置�??�音?��?
+    
+    /// <summary>
+    /// ?��??��??�找?�?��??��?索�?（用?�音?��?步�?
+    /// </summary>
+    int FindFrameByTime(float targetTime)
+    {
+        if (currentRecording == null || currentRecording.frames.Count == 0)
+            return -1;
+        
+        // 二�??��??�到?�?��??��?
+        int left = 0;
+        int right = currentRecording.frames.Count - 1;
+        int closestIndex = 0;
+        float closestDiff = Mathf.Abs(currentRecording.frames[0].timestamp - targetTime);
+        
+        while (left <= right)
+        {
+            int mid = (left + right) / 2;
+            float frameDiff = Mathf.Abs(currentRecording.frames[mid].timestamp - targetTime);
+            
+            // ?�新?�?��??��?
+            if (frameDiff < closestDiff)
+            {
+                closestDiff = frameDiff;
+                closestIndex = mid;
+            }
+            
+            // 繼�??��?
+            if (currentRecording.frames[mid].timestamp < targetTime)
+            {
+                left = mid + 1;
+            }
+            else
+            {
+                right = mid - 1;
+            }
+        }
+        
+        return closestIndex;
+    }
+
+    // ==================== 載入?�能 ====================
+    
+    public bool LoadRecording(string filename)
+    {
+        string loadPath = GetRecordingFilePath(filename);
+        
+        if (!File.Exists(loadPath))
+        {
+            Debug.LogError($"[StudentPlayback] 課�?檔�?不�??? {loadPath}");
+            return false;
+        }
+        
+        try
+        {
+            BinaryFormatter formatter = new BinaryFormatter();
+            using (FileStream stream = new FileStream(loadPath, FileMode.Open))
+            {
+                currentRecording = (AvatarRecordingData)formatter.Deserialize(stream);
+            }
+            
+            // 驗�??��?完整??
+            if (currentRecording.audioSamples == null)
+            {
+                Debug.LogWarning("[StudentPlayback] ???�格式�?案�?缺�?????�頻?��?");
+                currentRecording.audioSamples = new List<float>();
+            }
+            
+            // ?�置?�放?�??
+            playbackFrameIndex = 0;
+            playbackTimer = 0f;
+            isPlaying = false;
+            
+            if (showDebugLogs)
+            {
+                Debug.Log($"[StudentPlayback] ??課�?已�??? {currentRecording.recordingName}");
+                Debug.Log($"[StudentPlayback] ?�製?��?: {currentRecording.recordingDate}");
+                Debug.Log($"[StudentPlayback] ?�長: {currentRecording.duration:F1}s, 幀?? {currentRecording.frames.Count}");
+                Debug.Log($"[StudentPlayback] ?�頻�?��: {currentRecording.audioSamples.Count / (currentRecording.audioChannels > 0 ? currentRecording.audioChannels : 1)} ??);
+            }
+            
+            return true;
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[StudentPlayback] 載入失�?: {e.Message}");
+            Debug.LogError($"[StudentPlayback] ?�可?�是?�格式�??�製檔�?，�?使用 TeacherRecordingManager ?�新?�製");
+            Debug.LogError($"[StudentPlayback] 詳細?�誤: {e.StackTrace}");
+            return false;
+        }
+    }
+    
+    public void LoadLatestRecording()
+    {
+        string[] recordings = ListAvailableRecordings();
+        
+        if (recordings.Length > 0)
+        {
+            string fileToLoad = null;
+            
+            // ?��?試�??��?定�?檔�?
+            if (!string.IsNullOrEmpty(targetRecordingName))
+            {
+                foreach (string recording in recordings)
+                {
+                    if (recording.Equals(targetRecordingName, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        fileToLoad = recording;
+                        if (showDebugLogs)
+                            Debug.Log($"[StudentPlayback] ?�到?��?檔�?: {fileToLoad}");
+                        break;
+                    }
+                }
+                
+                if (fileToLoad == null && showDebugLogs)
+                {
+                    Debug.LogWarning($"[StudentPlayback] ?��??��?定�?�?'{targetRecordingName}'，�?載入?�?��?�?);
+                }
+            }
+            
+            // 如�?沒�??��??�找不到，�??��??��?檔�?
+            if (fileToLoad == null)
+            {
+                fileToLoad = recordings[recordings.Length - 1];
+                if (showDebugLogs)
+                    Debug.Log($"[StudentPlayback] 載入?�?��?�? {fileToLoad}");
+            }
+            
+            LoadRecording(fileToLoad);
+        }
+        else
+        {
+            Debug.LogWarning("[StudentPlayback] ?��??�任何課程�?�?);
+        }
+    }
+    
+    public string[] ListAvailableRecordings()
+    {
+        string folderPath = GetRecordingsFolderPath();
+        
+        if (!Directory.Exists(folderPath))
+        {
+            Debug.LogWarning($"[StudentPlayback] 課�?資�?夾�?存在: {folderPath}");
+            return new string[0];
+        }
+        
+        string[] files = Directory.GetFiles(folderPath, "*.recording");
+        
+        for (int i = 0; i < files.Length; i++)
+        {
+            files[i] = Path.GetFileNameWithoutExtension(files[i]);
+        }
+        
+        if (showDebugLogs)
+            Debug.Log($"[StudentPlayback] ?�到 {files.Length} ?�課程�?�?);
+        
+        return files;
+    }
+
+    string GetRecordingsFolderPath()
+    {
+        return Path.Combine(Application.dataPath, "Recordings");
+    }
+    
+    string GetRecordingFilePath(string filename)
+    {
+        return Path.Combine(GetRecordingsFolderPath(), filename + ".recording");
+    }
+
+    // ==================== UI 顯示 ====================
+    
+    void OnGUI()
+    {
+        if (!showPlaybackUI)
+            return;
+        
+        GUIStyle style = new GUIStyle(GUI.skin.box);
+        style.fontSize = 20;
+        style.normal.textColor = Color.white;
+        style.padding = new RectOffset(15, 15, 10, 10);
+        
+        float width = 450f;
+        float height = 150f;
+        float xPos = Screen.width - width - 20f;
+        float yPos = 20f;
+        
+        GUI.Box(new Rect(xPos, yPos, width, height), "", style);
+        
+        GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
+        labelStyle.fontSize = 18;
+        labelStyle.normal.textColor = Color.white;
+        labelStyle.fontStyle = FontStyle.Bold;
+        
+        float yOffset = yPos + 15f;
+        
+        if (currentRecording == null)
+        {
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 35f),
+                "?? 學�??�放�?- 等�?載入課�?", labelStyle);
+            yOffset += 40f;
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 30f),
+                "??L ?��??��??�課�?, labelStyle);
+        }
+        else if (isPlaying)
+        {
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 35f),
+                "???�放�?..", labelStyle);
+            yOffset += 35f;
+            
+            // 使用?�頻?��???playbackTimer
+            float currentTime = useAudioSync && teacherAudioSource != null && teacherAudioSource.isPlaying
+                ? teacherAudioSource.time
+                : playbackTimer;
+            float progress = currentRecording.duration > 0 ? currentTime / currentRecording.duration : 0f;
+            
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 30f),
+                $"?��?: {currentTime:F1}s / {currentRecording.duration:F1}s", labelStyle);
+            yOffset += 30f;
+            
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 25f),
+                $"幀: {playbackFrameIndex}/{currentRecording.frames.Count}", labelStyle);
+            yOffset += 30f;
+            
+            // ?�度�?
+            DrawProgressBar(new Rect(xPos + 15f, yOffset, width - 30f, 20f), progress);
+        }
+        else
+        {
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 35f),
+                "??已�??�課�?, labelStyle);
+            yOffset += 35f;
+            
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 25f),
+                $"課�?: {currentRecording.recordingName}", labelStyle);
+            yOffset += 25f;
+            
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 25f),
+                $"?�長: {currentRecording.duration:F1}s", labelStyle);
+            yOffset += 30f;
+            
+            GUI.Label(new Rect(xPos + 15f, yOffset, width, 25f),
+                "??P ??Space ?��??�放", labelStyle);
+        }
+    }
+    
+    void DrawProgressBar(Rect rect, float progress)
+    {
+        // ?�景
+        GUI.color = new Color(0.3f, 0.3f, 0.3f, 0.8f);
+        GUI.DrawTexture(rect, Texture2D.whiteTexture);
+        
+        // ?�度�?
+        GUI.color = Color.Lerp(Color.green, Color.blue, progress);
+        Rect progressRect = new Rect(rect.x, rect.y, rect.width * progress, rect.height);
+        GUI.DrawTexture(progressRect, Texture2D.whiteTexture);
+        
+        GUI.color = Color.white;
+    }
+
+    // ==================== ?��?步�??�放 ====================
+    
+    private int lastSyncedStep = -1;
+    
+    /// <summary>
+    /// ?�步?��?步�???Alembic ?�畫（在?�放?�調?��?
+    /// </summary>
+    void SyncOrigamiStep(float currentTime)
+    {
+        int targetStep = GetCurrentOrigamiStep(currentTime);
+        
+        if (targetStep >= 0)
+        {
+            var stepGuide = FindFirstObjectByType<OrigamiStepGuideSimple>();
+            if (stepGuide != null)
+            {
+                // ?�播?�模式�?，�?要調??JumpToStep（�??��?�?Alembic ?��?跳�?�?
+                // ?��??�步驟�??�用?�調�?
+                if (targetStep != lastSyncedStep)
+                {
+                    lastSyncedStep = targetStep;
+                    
+                    if (showDebugLogs)
+                        Debug.Log($"[StudentPlayback] ?��??�步�?{targetStep}");
+                }
+                
+                // ?��??�新 Alembic ?�畫（�?幀?�更?��?確�??�畫流暢�?
+                var syncController = FindObjectOfType<OrigamiSyncController>();
+                if (syncController != null && syncController.alembicPlayer != null)
+                {
+                    // ?�到該步驟�?始�??��???
+                    float stepStartTime = 0f;
+                    foreach (var stepEvent in currentRecording.origamiStepEvents)
+                    {
+                        if (stepEvent.stepIndex == targetStep)
+                        {
+                            stepStartTime = stepEvent.timestamp;
+                            break;
+                        }
+                    }
+                    
+                    // 計�?步�??��??��??��?
+                    float elapsedInStep = currentTime - stepStartTime;
+                    var step = stepGuide.steps[targetStep];
+                    float stepProgress = Mathf.Clamp01(elapsedInStep / step.duration);
+                    
+                    // ?��???Alembic ?�畫?�度
+                    float targetProgress = Mathf.Lerp(step.progressStart, step.progressEnd, stepProgress);
+                    float alembicTime = targetProgress * syncController.alembicPlayer.Duration;
+                    
+                    syncController.alembicPlayer.CurrentTime = alembicTime;
+                    
+                    if (showDebugLogs && Time.frameCount % 30 == 0)
+                        Debug.Log($"[StudentPlayback] Alembic ?�放: 步�? {targetStep}, ?�度 {stepProgress:F2}, ?��? {alembicTime:F2}s");
+                }
+            }
+        }
+    }
+    
+    /// <summary>
+    /// ?��??��??��??�該顯示?�摺紙步驟�??�於?�放�?
+    /// </summary>
+    public int GetCurrentOrigamiStep(float currentTime)
+    {
+        if (currentRecording == null || currentRecording.origamiStepEvents.Count == 0)
+            return -1;
+        
+        // ?�到?�後�??��??�戳 <= currentTime ?�步�?
+        int currentStep = -1;
+        foreach (var stepEvent in currentRecording.origamiStepEvents)
+        {
+            if (stepEvent.timestamp <= currentTime)
+            {
+                currentStep = stepEvent.stepIndex;
+            }
+            else
+            {
+                break;
+            }
+        }
+        
+        return currentStep;
+    }
+
+    // ==================== ?��?屬�?====================
+    
+    public bool IsPlaying => isPlaying;
+    public bool HasRecording => currentRecording != null && currentRecording.frames.Count > 0;
+    public string CurrentRecordingName => currentRecording?.recordingName ?? "";
+    public float PlaybackProgress => currentRecording != null && currentRecording.duration > 0 
+        ? playbackTimer / currentRecording.duration : 0f;
+    public AvatarRecordingData CurrentRecording => currentRecording;
+    
+    /// <summary>
+    /// 跳�??��?定�??��?（�?�?
+    /// ?��??�步 Avatar?�音?�、摺紙步�?
+    /// </summary>
+    public void JumpToTime(float targetTime)
+    {
+        if (currentRecording == null || !isPlaying)
+        {
+            Debug.LogWarning("[StudentPlayback] ?��?跳�?：�??�正?�播?��??�製檔�?");
+            return;
+        }
+        
+        // 1. ?�到對�???Avatar 幀
+        int targetFrameIndex = -1;
+        for (int i = 0; i < currentRecording.frames.Count; i++)
+        {
+            if (currentRecording.frames[i].timestamp >= targetTime)
+            {
+                targetFrameIndex = i;
+                break;
+            }
+        }
+        
+        if (targetFrameIndex < 0 && currentRecording.frames.Count > 0)
+        {
+            // 如�?超�??�後�?幀，使?��?後�?幀
+            targetFrameIndex = currentRecording.frames.Count - 1;
+        }
+        
+        if (targetFrameIndex >= 0)
+        {
+            // 2. ?�用該�???Avatar ?��?
+            if (teacherAvatar != null)
+            {
+                AvatarFrameData frame = currentRecording.frames[targetFrameIndex];
+                if (frame.avatarStreamData != null && frame.avatarStreamData.Length > 0)
+                {
+                    ApplyAvatarStream(frame.avatarStreamData);
+                }
+                if (showDebugLogs)
+                    Debug.Log($"[StudentPlayback] 跳�? Avatar ?�第 {targetFrameIndex} 幀");
+            }
+            
+            // 3. 跳�??�頻?�放位置
+            if (teacherAudioSource != null && teacherAudioSource.clip != null)
+            {
+                int audioSamplePosition = (int)(targetTime * currentRecording.audioSampleRate * currentRecording.audioChannels);
+                audioSamplePosition = Mathf.Clamp(audioSamplePosition, 0, currentRecording.audioSamples.Count - 1);
+                teacherAudioSource.timeSamples = audioSamplePosition;
+                
+                if (showDebugLogs)
+                    Debug.Log($"[StudentPlayback] 跳�??�頻??{audioSamplePosition} samples");
+            }
+            
+            // 4. ?�接?�新 Alembic ?�畫（�?調用 JumpToStep ?��??�置�?
+            int targetStep = GetCurrentOrigamiStep(targetTime);
+            if (targetStep >= 0)
+            {
+                var stepGuideSimple = FindFirstObjectByType<OrigamiStepGuideSimple>();
+                var syncController = FindObjectOfType<OrigamiSyncController>();
+                
+                if (syncController != null && syncController.alembicPlayer != null && stepGuideSimple != null)
+                {
+                    // 計�?該步驟在?��??��???Alembic ?�度
+                    var step = stepGuideSimple.steps[targetStep];
+                    
+                    // ?�到該步驟�?始�??��???
+                    float stepStartTime = 0f;
+                    foreach (var stepEvent in currentRecording.origamiStepEvents)
+                    {
+                        if (stepEvent.stepIndex == targetStep)
+                        {
+                            stepStartTime = stepEvent.timestamp;
+                            break;
+                        }
+                    }
+                    
+                    // 計�?步�??��??��??��?
+                    float elapsedInStep = targetTime - stepStartTime;
+                    float stepProgress = Mathf.Clamp01(elapsedInStep / step.duration);
+                    
+                    // ?��???Alembic ?�畫?�度
+                    float targetProgress = Mathf.Lerp(step.progressStart, step.progressEnd, stepProgress);
+                    float alembicTime = targetProgress * syncController.alembicPlayer.Duration;
+                    
+                    syncController.alembicPlayer.CurrentTime = alembicTime;
+                    
+                    if (showDebugLogs)
+                        Debug.Log($"[StudentPlayback] 跳�? Alembic ??{alembicTime:F2}s (?�度: {targetProgress:F2})");
+                }
+            }
+            
+            // ?�新?�部?�放計�??��?幀索�?（支?��????��?跳�?�?
+            playbackFrameIndex = targetFrameIndex;
+            playbackTimer = targetTime;
+            
+            // ?�置?�步步�?記�?，�? SyncOrigamiStep ?�新?�步
+            lastSyncedStep = -1;
+            
+            if (showDebugLogs)
+                Debug.Log($"[StudentPlayback] ??已跳轉到 {targetTime:F2} �?);
+        }
+        else
+        {
+            Debug.LogWarning($"[StudentPlayback] ?��??��??��??��?幀：{targetTime:F2}s");
+        }
+    }
+    
+    // ==================== UI ?�制?�數 ====================
+    
+    /// <summary>
+    /// UI：�??��??��?製�?案�??��??�叫�?
+    /// </summary>
+    public void UI_LoadRecording()
+    {
+        LoadLatestRecording();
+    }
+    
+    /// <summary>
+    /// UI：播?�第一?�步驟�?（�??�呼?��?
+    /// </summary>
+    public void UI_PlayFirstStep()
+    {
+        if (currentRecording == null || currentRecording.origamiStepEvents.Count == 0)
+        {
+            // 如�?沒�?載入?�製，�??��?載入
+            LoadLatestRecording();
+            
+            if (currentRecording == null || currentRecording.origamiStepEvents.Count == 0)
+            {
+                Debug.LogError("[StudentPlayback] 沒�??�播?��??�製?��?");
+                return;
+            }
+        }
+        
+        // ?�放第�??�步驟�?
+        PlayStepGroup(0);
+    }
+    
+    /// <summary>
+    /// UI：暫?�播?��??��??�叫�?
+    /// </summary>
+    public void UI_PausePlayback()
+    {
+        if (isPlaying)
+        {
+            StopPlayback();
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] UI: 已暫?�播??);
+        }
+    }
+    
+    /// <summary>
+    /// UI：繼續播?��??��??�叫�?
+    /// </summary>
+    public void UI_ResumePlayback()
+    {
+        if (!isPlaying && currentRecording != null)
+        {
+            StartPlayback();
+            if (showDebugLogs)
+                Debug.Log("[StudentPlayback] UI: 繼�??�放");
+        }
+    }
+    
+    /// <summary>
+    /// UI：�?證當?�步驟�??��??�叫�?
+    /// </summary>
+    public void UI_VerifyStep()
+    {
+        if (!enableShapeVerification)
+        {
+            UnityEngine.Debug.Log("[StudentPlayback] 形�?驗�?已�??��??��??��?");
+            UnityEngine.Debug.Log("??驗�??��?！可以繼續�?一步�?");
+            return;
+        }
+        
+        if (currentRecording == null || currentRecording.origamiStepEvents.Count == 0)
+        {
+            UnityEngine.Debug.LogWarning("[StudentPlayback] 沒�??�製?��?，無法�?�?);
+            return;
+        }
+        
+        int currentStep = GetCurrentStepGroupIndex();
+        if (currentStep < 0)
+        {
+            UnityEngine.Debug.LogWarning("[StudentPlayback] 尚未?��??�放，無法�?�?);
+            return;
+        }
+        
+        UnityEngine.Debug.Log($"[StudentPlayback] ?��?驗�?步�? {currentStep + 1}...");
+        
+        // 1. ?��??��??�面
+        string imagePath = CaptureOrigamiScreenshot();
+        if (string.IsNullOrEmpty(imagePath))
+        {
+            UnityEngine.Debug.LogError("[StudentPlayback] ?��?失�?");
+            return;
+        }
+        
+        // 2. 調用 Python ?�測
+        string detectionResult = RunShapeDetection(imagePath);
+        if (string.IsNullOrEmpty(detectionResult))
+        {
+            UnityEngine.Debug.LogError("[StudentPlayback] ?�測失�?");
+            return;
+        }
+        
+        // 3. �??並�?證�???
+        bool isCorrect = VerifyDetectionResult(detectionResult, currentStep);
+        
+        if (isCorrect)
+        {
+            UnityEngine.Debug.Log($"<color=green>??驗�??��?！形?��?��：步�?{currentStep + 1}</color>");
+            UnityEngine.Debug.Log("?�以繼�?下�?步�?�?);
+        }
+        else
+        {
+            UnityEngine.Debug.Log($"<color=red>??驗�?失�?！形?�不符?�步�?{currentStep + 1}</color>");
+            UnityEngine.Debug.Log("請�??��?作�??�播此步驟�?);
+        }
+    }
+    
+    /// <summary>
+    /// UI：播?��?一?�步驟�?（�??�呼?��?
+    /// </summary>
+    public void UI_PreviousStep()
+    {
+        PlayPreviousStepGroup();
+    }
+    
+    /// <summary>
+    /// UI：�??�當?�步驟�?（�??�呼?��?
+    /// </summary>
+    public void UI_ReplayStep()
+    {
+        ReplayCurrentStepGroup();
+    }
+    
+    /// <summary>
+    /// UI：播?��?一?�步驟�?（�??�呼?��?
+    /// </summary>
+    public void UI_NextStep()
+    {
+        PlayNextStepGroup();
+    }
+    
+    /// <summary>
+    /// UI：離?�播?��??�到?��??�?��??��??�叫�?
+    /// </summary>
+    public void UI_ExitPlayback()
+    {
+        CancelPlayback();
+        if (showDebugLogs)
+            Debug.Log("[StudentPlayback] UI: 已離?�播??);
+    }
+    
+    /// <summary>
+    /// ?��??��??�放?�步驟�?索�?
+    /// </summary>
+    public int GetCurrentStepGroupIndex()
+    {
+        return currentPlayingGroupIndex;
+    }
+    
+    /// <summary>
+    /// ?��?總步驟�??��?
+    /// </summary>
+    public int GetTotalStepGroups()
+    {
+        return stepGroups.Count;
+    }
+    
+    /// <summary>
+    /// 檢查?�否?��?製數?�已載入
+    /// </summary>
+    public bool HasRecordingLoaded()
+    {
+        return currentRecording != null && currentRecording.frames.Count > 0;
+    }
+    
+    // ==================== 形�?驗�??��??�數 ====================
+    
+    /// <summary>
+    /// ?��??��??�面
+    /// </summary>
+    private string CaptureOrigamiScreenshot()
+    {
+        try
+        {
+            // 確�??��?資�?夾�???
+            string fullPath = Path.GetFullPath(screenshotPath);
+            if (!Directory.Exists(fullPath))
+            {
+                Directory.CreateDirectory(fullPath);
+                UnityEngine.Debug.Log($"[StudentPlayback] ?�建?��?資�?�? {fullPath}");
+            }
+            
+            // ?��?檔�?
+            string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string filename = $"verify_step_{GetCurrentStepGroupIndex() + 1}_{timestamp}.png";
+            string filepath = Path.Combine(fullPath, filename);
+            
+            // 使用?��??��??��?（�??��?�?
+            if (verificationCamera != null)
+            {
+                RenderTexture rt = new RenderTexture(1920, 1080, 24);
+                verificationCamera.targetTexture = rt;
+                verificationCamera.Render();
+                
+                RenderTexture.active = rt;
+                Texture2D screenshot = new Texture2D(1920, 1080, TextureFormat.RGB24, false);
+                screenshot.ReadPixels(new Rect(0, 0, 1920, 1080), 0, 0);
+                screenshot.Apply();
+                
+                verificationCamera.targetTexture = null;
+                RenderTexture.active = null;
+                Destroy(rt);
+                
+                byte[] bytes = screenshot.EncodeToPNG();
+                File.WriteAllBytes(filepath, bytes);
+                Destroy(screenshot);
+            }
+            else
+            {
+                // 使用主相機截??
+                ScreenCapture.CaptureScreenshot(filepath);
+                // 等�??��?完�?（Unity ??CaptureScreenshot ?�異步�?�?
+                // 注�?：實?��??�中?�能?�要�?程�?�?
+            }
+            
+            UnityEngine.Debug.Log($"[StudentPlayback] ?��?已�?�? {filepath}");
+            return filepath;
+        }
+        catch (System.Exception e)
+        {
+            UnityEngine.Debug.LogError($"[StudentPlayback] ?��?失�?: {e.Message}");
+            return null;
+        }
+    }
+    
+    /// <summary>
+    /// 調用 Python ?��?形�??�測
+    /// </summary>
+    private string RunShapeDetection(string imagePath)
+    {
+        try
+        {
+            // 轉�??��?對路�?
+            string scriptFullPath = Path.GetFullPath(detectionScriptPath);
+            string modelFullPath = Path.GetFullPath(modelPath);
+            string imageFullPath = Path.GetFullPath(imagePath);
+            
+            if (!File.Exists(scriptFullPath))
+            {
+                UnityEngine.Debug.LogError($"[StudentPlayback] ?��??�偵測腳?? {scriptFullPath}");
+                return null;
+            }
+            
+            if (!File.Exists(modelFullPath))
+            {
+                UnityEngine.Debug.LogError($"[StudentPlayback] ?��??�模?��?�? {modelFullPath}");
+                return null;
+            }
+            
+            // 構建?�令?��???
+            string arguments = $"\"{scriptFullPath}\" \"{imageFullPath}\" --model \"{modelFullPath}\" --conf {confidenceThreshold}";
+            
+            UnityEngine.Debug.Log($"[StudentPlayback] ?��??�測: {pythonExecutablePath} {arguments}");
+            
+            // ?��? Python 子進�?
+            ProcessStartInfo startInfo = new ProcessStartInfo
+            {
+                FileName = pythonExecutablePath,
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+            
+            using (Process process = Process.Start(startInfo))
+            {
+                // 讀?�輸??
+                string output = process.StandardOutput.ReadToEnd();
+                string errors = process.StandardError.ReadToEnd();
+                
+                process.WaitForExit();
+                
+                if (process.ExitCode != 0)
+                {
+                    UnityEngine.Debug.LogError($"[StudentPlayback] Python ?��?失�? (Exit Code: {process.ExitCode})");
+                    UnityEngine.Debug.LogError($"?�誤訊息: {errors}");
+                    return null;
+                }
+                
+                if (showDebugLogs)
+                {
+                    UnityEngine.Debug.Log($"[StudentPlayback] Python 輸出:\n{output}");
+                }
+                
+                return output;
+            }
+        }
+        catch (System.Exception e)
+        {
+            UnityEngine.Debug.LogError($"[StudentPlayback] ?��??�測?�發?�錯�? {e.Message}\n{e.StackTrace}");
+            return null;
+        }
+    }
+    
+    /// <summary>
+    /// 驗�??�測結�??�否符�??��?步�?
+    /// </summary>
+    private bool VerifyDetectionResult(string pythonOutput, int expectedStep)
+    {
+        if (string.IsNullOrEmpty(pythonOutput))
+            return false;
+        
+        // �?? Python 輸出，�???"Result: shape_X"
+        string expectedShape = $"shape_{expectedStep + 1}";
+        
+        // 檢查輸出中是?��??��??�形?�
+        if (pythonOutput.ToLower().Contains($"result: {expectedShape}"))
+        {
+            UnityEngine.Debug.Log($"[StudentPlayback] ?�測?�正確形?�: {expectedShape}");
+            return true;
+        }
+        
+        // 檢查?�否?�測?�其他形?�
+        if (pythonOutput.ToLower().Contains("result: shape_"))
+        {
+            // ?��??�測?��?形�?
+            string detectedShape = "?�知";
+            string[] lines = pythonOutput.Split('\n');
+            foreach (string line in lines)
+            {
+                if (line.ToLower().Contains("result:"))
+                {
+                    detectedShape = line.Trim();
+                    break;
+                }
+            }
+            UnityEngine.Debug.LogWarning($"[StudentPlayback] ?�測?�錯誤形?�: {detectedShape}（�??? {expectedShape}�?);
+            return false;
+        }
+        
+        // 沒�??�測?�任何形?�
+        if (pythonOutput.ToLower().Contains("result: none"))
+        {
+            UnityEngine.Debug.LogWarning($"[StudentPlayback] ?�偵測到任�?形�?（�??? {expectedShape}�?);
+            return false;
+        }
+        
+        // ?��?�??輸出
+        UnityEngine.Debug.LogWarning($"[StudentPlayback] ?��?�???�測結�?");
+        return false;
+    }
+}

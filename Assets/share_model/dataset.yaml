@@ -1,0 +1,18 @@
+# YOLOv8 数据集配置文件
+# 从 Roboflow 导入的 Origami Detection 数据集（更新版）
+
+# 数据集路径
+path: C:/Users/user/Desktop/Asynchronous Learning/Assets/share_model/dataset
+train: train/images
+val: valid/images
+test: test/images
+
+# 类别数量和名称
+nc: 3
+names: ['shape_1', 'shape_2', 'shape_3']
+
+# 数据集信息
+# 来源: Roboflow Origami Detection v2 (2025-12-17)
+# 图片数量: 296 张（训练230 + 验证66）
+# 改进: 增加了 shape_2 的样本数量
+# 标注格式: YOLOv8 Object Detection
