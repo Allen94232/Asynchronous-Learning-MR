@@ -1,322 +1,85 @@
-# YOLO 模型重新训练指南
+# YOLO Model Training Guide
 
-## 为什么需要重新训练？
+This guide describes a reproducible training path using the files that currently exist in `Assets/share_model`. It does not depend on repository-local helper scripts.
 
-当前模型的问题：
-- ✅ 检测到的信心度太低（19-22%）
-- ✅ 容易受背景干扰
-- ✅ 在复杂环境下表现不佳
+## Requirements
 
-改进方向：
-- 🎯 使用更多训练数据（不同角度、光线、背景）
-- 🎯 数据增强（旋转、缩放、亮度变化）
-- 🎯 调整训练参数（epochs, batch size）
-- 🎯 使用更大的模型（nano → small → medium）
-
----
-
-## 步骤 1：准备训练数据
-
-### 1.1 收集图片
-
-**建议数量**：
-- 每个步骤：**至少 100-200 张图片**
-- 总共：300-600 张图片（3个步骤）
-
-**拍摄建议**：
-- ✅ 不同角度（正面、侧面、斜角）
-- ✅ 不同光线（自然光、室内灯光）
-- ✅ 不同背景（白色、木桌、复杂背景）
-- ✅ 不同距离（近景、中景）
-- ✅ 包含部分折叠状态（过渡状态）
-
-**存储结构**：
-```
-dataset/
-├── images/
-│   ├── shape1_001.jpg
-│   ├── shape1_002.jpg
-│   ├── shape2_001.jpg
-│   └── ...
-└── labels/
-    ├── shape1_001.txt
-    ├── shape1_002.txt
-    └── ...
-```
-
-### 1.2 标注工具推荐
-
-**选项 1：LabelImg**（简单易用）
 ```bash
-pip install labelImg
-labelImg
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install ultralytics opencv-python
 ```
 
-**选项 2：Roboflow**（在线工具，推荐！）
-- 网址：https://roboflow.com
-- 功能：自动标注辅助、数据增强、格式转换
-- 免费版：最多 10,000 张图片
+Use the activation command appropriate for your operating system.
 
-**选项 3：CVAT**（专业工具）
-- 网址：https://www.cvat.ai
+## Dataset
 
-### 1.3 标注格式（YOLO格式）
+Review `dataset.yaml` before training. Paths should be relative to the dataset root or valid on the current machine; do not commit personal absolute paths.
 
-每张图片对应一个 `.txt` 文件，格式：
-```
-<class_id> <x_center> <y_center> <width> <height>
-```
+The labeled data is organized into train, validation, and test splits under `dataset/`.
 
-**示例**：`shape1_001.txt`
-```
-0 0.5 0.5 0.3 0.4
-```
-- `0`：shape_1 的 class_id（shape_2=1, shape_3=2）
-- `0.5 0.5`：边界框中心点（归一化坐标 0-1）
-- `0.3 0.4`：边界框宽度和高度（归一化）
-
-### 1.4 划分数据集
-
-建议比例：
-- **训练集（train）**：70%（用于训练模型）
-- **验证集（val）**：20%（用于调参）
-- **测试集（test）**：10%（用于最终评估）
-
----
-
-## 步骤 2：配置训练环境
-
-### 2.1 创建数据集配置文件
-
-创建 `dataset.yaml`：
-```yaml
-# 数据集路径
-path: C:/Users/user/Desktop/Asynchronous Learning/Assets/share_model/dataset
-train: images/train
-val: images/val
-test: images/test
-
-# 类别
-nc: 3  # 类别数量
-names: ['shape_1', 'shape_2', 'shape_3']
-```
-
-### 2.2 检查 Python 环境
-
-确保已安装：
-```bash
-pip install ultralytics
-pip install opencv-python
-pip install matplotlib
-```
-
----
-
-## 步骤 3：开始训练
-
-### 3.1 基础训练（推荐新手）
+## Start a New Training Run
 
 ```python
 from ultralytics import YOLO
 
-# 使用 YOLOv8 nano 模型（速度快）
-model = YOLO('yolov8n.pt')
-
-# 开始训练
+model = YOLO("yolov8n.pt")
 results = model.train(
-    data='dataset.yaml',
-    epochs=100,              # 训练轮数
-    imgsz=640,               # 图片大小
-    batch=16,                # 批次大小
-    name='origami_v2',       # 项目名称
-    patience=20,             # 早停机制
-)
-```
-
-### 3.2 进阶训练（更好效果）
-
-```python
-from ultralytics import YOLO
-
-# 使用 YOLOv8 small 模型（精度更高）
-model = YOLO('yolov8s.pt')
-
-results = model.train(
-    data='dataset.yaml',
-    epochs=150,
+    data="dataset.yaml",
+    epochs=100,
     imgsz=640,
-    batch=8,
-    name='origami_v2_small',
-    patience=30,
-    
-    # 数据增强
-    augment=True,
-    hsv_h=0.015,            # 色调变化
-    hsv_s=0.7,              # 饱和度变化
-    hsv_v=0.4,              # 亮度变化
-    degrees=10,             # 旋转角度
-    translate=0.1,          # 平移
-    scale=0.5,              # 缩放
-    flipud=0.0,             # 上下翻转
-    fliplr=0.5,             # 左右翻转
-    mosaic=1.0,             # mosaic 增强
-    
-    # 优化器设置
-    optimizer='Adam',
-    lr0=0.001,              # 初始学习率
-    momentum=0.937,
-    weight_decay=0.0005,
+    name="origami_v2",
 )
 ```
 
-### 3.3 从现有模型继续训练（Fine-tuning）
+Tune batch size, device, augmentation, and patience for the available hardware and dataset. Do not publish fixed training-time estimates because runtime varies substantially by device.
+
+## Fine-Tune Existing Weights
+
+To initialize a new training run from the current best weights:
 
 ```python
 from ultralytics import YOLO
 
-# 从你现有的模型继续训练
-model = YOLO('best.pt')
-
+model = YOLO("best.pt")
 results = model.train(
-    data='dataset.yaml',
+    data="dataset.yaml",
     epochs=50,
     imgsz=640,
-    batch=16,
-    name='origami_finetune',
-    resume=True,            # 继续训练
+    name="origami_finetune",
 )
 ```
 
----
+This is a new run initialized from existing weights. It is different from resuming an interrupted run.
 
-## 步骤 4：评估模型
+## Resume an Interrupted Run
 
-### 4.1 查看训练结果
-
-训练完成后会生成：
-```
-runs/detect/origami_v2/
-├── weights/
-│   ├── best.pt          # 最佳模型（使用这个！）
-│   └── last.pt          # 最后一轮模型
-├── results.png          # 训练曲线
-├── confusion_matrix.png # 混淆矩阵
-└── ...
-```
-
-### 4.2 测试模型
+Resume from that run's `last.pt`, which preserves optimizer, scheduler, and epoch state:
 
 ```python
 from ultralytics import YOLO
 
-# 加载训练好的模型
-model = YOLO('runs/detect/origami_v2/weights/best.pt')
-
-# 在测试集上评估
-results = model.val(data='dataset.yaml')
-
-print(f"mAP50: {results.box.map50:.3f}")      # 精度指标
-print(f"mAP50-95: {results.box.map:.3f}")    # 更严格的精度
+model = YOLO("runs/detect/origami_v2/weights/last.pt")
+results = model.train(resume=True)
 ```
 
-### 4.3 单张图片测试
+## Evaluate
 
 ```python
 from ultralytics import YOLO
 
-model = YOLO('runs/detect/origami_v2/weights/best.pt')
-
-# 测试单张图片
-results = model('test_images/test.png', conf=0.3)
-
-# 显示结果
-results[0].show()
-
-# 查看检测详情
-for box in results[0].boxes:
-    print(f"Class: {results[0].names[int(box.cls)]}")
-    print(f"Confidence: {box.conf[0]:.2%}")
+model = YOLO("runs/detect/origami_v2/weights/best.pt")
+metrics = model.val(data="dataset.yaml")
+print(metrics.box.map50)
+print(metrics.box.map)
 ```
 
----
+Before replacing `best.pt`, compare the new model on the same held-out test set and record at least mAP50, mAP50–95, per-class performance, and representative failure cases.
 
-## 步骤 5：替换 Unity 模型
+## Promote a Model
 
-### 5.1 复制新模型
-
-```bash
-# 将训练好的模型复制到 Unity 项目
-copy runs/detect/origami_v2/weights/best.pt best.pt
-```
-
-### 5.2 测试新模型
-
-在 Unity 中：
-1. 确保 `best.pt` 在 `share_model/` 文件夹
-2. 重新启动游戏
-3. 按 **T** 键测试截图
-4. 检查 Console 看信心度是否提高
-
-### 5.3 调整阈值
-
-如果新模型信心度更高（如 60-80%），可以提高阈值：
-- Unity Inspector → ShapeDetector → confidenceThreshold = **0.5**（从0.3提高）
-
----
-
-## 常见问题
-
-### Q1: 训练需要多久？
-- Nano 模型 + 100 epochs：**10-30 分钟**（CPU）/ **3-5 分钟**（GPU）
-- Small 模型 + 150 epochs：**30-60 分钟**（CPU）/ **8-15 分钟**（GPU）
-
-### Q2: 没有 GPU 怎么办？
-- 使用 **Google Colab**（免费 GPU）
-- 使用 **Kaggle Notebooks**（免费 GPU）
-- 使用 Nano 模型 + 减少 epochs
-
-### Q3: 训练精度不高怎么办？
-1. **增加数据量**（最重要！）
-2. 增加训练轮数（epochs）
-3. 使用更大的模型（s/m/l）
-4. 调整数据增强参数
-5. 检查标注是否准确
-
-### Q4: 如何判断模型是否过拟合？
-查看 `results.png`：
-- **训练损失持续下降，验证损失上升** → 过拟合
-- **解决方案**：减少 epochs、增加数据、增强正则化
-
----
-
-## 推荐训练流程
-
-### 🎯 最佳实践
-
-1. **快速验证**（确认流程可行）
-   - 使用 30 张图片
-   - YOLOv8n + 50 epochs
-   - 确认能跑通
-
-2. **中等规模训练**（初步改进）
-   - 使用 100-200 张图片
-   - YOLOv8n + 100 epochs
-   - 测试效果
-
-3. **完整训练**（追求最佳效果）
-   - 使用 300-600 张图片
-   - YOLOv8s + 150-200 epochs
-   - 数据增强
-   - Fine-tuning
-
----
-
-## 下一步
-
-我已经为你创建了：
-1. ✅ `train_model.py` - 训练脚本
-2. ✅ `dataset_template.yaml` - 数据集配置模板
-3. ✅ `prepare_dataset.py` - 数据集准备工具
-4. ✅ `evaluate_model.py` - 模型评估脚本
-
-直接运行 `python train_model.py` 即可开始训练！
+1. Preserve the run configuration and evaluation output.
+2. Copy the selected weights to `best.pt`.
+3. Test the model using the same image preprocessing expected by the Unity detector.
+4. Verify all fold-state class names still match `ShapeDetector.cs`.
+5. Commit the new weight only when the large-file policy is clear.
