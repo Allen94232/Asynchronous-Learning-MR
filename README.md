@@ -73,7 +73,7 @@ A mixed-reality prototype for recording and replaying avatar-based origami instr
 
 ## Shape-Detection Status
 
-The repository contains model weights, a dataset, and the Unity integration. `ShapeDetector.cs` currently expects `Assets/share_model/detect_shapes.py`, but that Python entry point is not present in the repository. The validation feature therefore requires a compatible external detector or a future implementation of that script. See the [model documentation](Assets/share_model/README.md) before enabling this path.
+The repository includes model weights, a dataset, the Unity integration, and a compatible `Assets/share_model/detect_shapes.py` entry point. Install the Python dependencies before enabling validation, then verify the model classes and confidence threshold against the current dataset. See the [model documentation](Assets/share_model/README.md).
 
 ## Repository Structure
 

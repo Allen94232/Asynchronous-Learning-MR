@@ -11,20 +11,15 @@ This directory contains YOLO model weights, dataset metadata, labeled images, an
 - `runs/`: committed training outputs
 - model backup files
 
-## Important Runtime Limitation
+## Runtime Entry Point
 
-[`ShapeDetector.cs`](../Scripts/ShapeDetector.cs) expects a Python entry point at:
+[`ShapeDetector.cs`](../Scripts/ShapeDetector.cs) calls:
 
 ```text
 Assets/share_model/detect_shapes.py
 ```
 
-That script is not currently present in the repository. A clean clone therefore contains the model and Unity-side integration but not a complete runnable Python inference service.
-
-To restore the workflow, either:
-
-1. Add a compatible `detect_shapes.py` implementation that follows the JSON contract expected by `ShapeDetector.cs`, or
-2. Change `ShapeDetector.cs` to call another local or remote inference service.
+The script loads `best.pt` by default, accepts the Unity command-line arguments, and writes one JSON response to standard output. Diagnostic output is redirected to standard error so Unity's JSON parser is not polluted.
 
 ## Documentation
 
@@ -40,7 +35,7 @@ Typical Python dependencies for training and local experiments are:
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-python -m pip install ultralytics opencv-python
+python -m pip install -r requirements.txt
 ```
 
 Use the activation command appropriate for your operating system.

@@ -45,9 +45,7 @@ Do not select a threshold from a single image. Compare several thresholds over a
 
 ## Unity Integration
 
-`ShapeDetector.cs` expects a Python script named `detect_shapes.py`. That script is currently missing, so successful standalone model inference does not by itself make the Unity validation path runnable.
-
-When the detector is restored, validate:
+`ShapeDetector.cs` uses `detect_shapes.py` as the local inference entry point. After installing the dependencies, validate:
 
 1. Screenshot output and color format.
 2. Model and class-name paths.
@@ -55,4 +53,4 @@ When the detector is restored, validate:
 4. Confidence-threshold behavior.
 5. Timeout and process-error handling.
 
-See the [model directory README](README.md) for the current limitation.
+See the [model directory README](README.md) for setup and runtime details.

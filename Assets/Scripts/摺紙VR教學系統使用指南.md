@@ -33,7 +33,7 @@
 2. 開始播放 Avatar、音訊與摺紙動畫。
 3. 使用播放控制暫停、繼續或跳轉。
 4. 在步驟邊界確認視覺提示與 Alembic 動畫同步。
-5. 若啟用形狀驗證，先確認外部 Python detector 已可用。
+5. 若啟用形狀驗證，先依模型目錄的 `requirements.txt` 安裝 Python 套件，並確認 `best.pt` 可載入。
 
 ## Alembic 設定
 
@@ -63,6 +63,6 @@
 - 最後一步完成後可以安全停止或重新開始。
 - Passthrough scene 的提示在真實背景下仍清楚可見。
 
-## 模型驗證限制
+## 模型驗證
 
-目前 repository 沒有 `Assets/share_model/detect_shapes.py`。在補齊 detector 前，`ShapeDetector` 的 Python 驗證流程無法從乾淨 clone 直接執行。詳見[模型與資料集說明](../share_model/README.md)。
+`Assets/share_model/detect_shapes.py` 已提供 Unity 所需的命令列與 JSON 介面。啟用前仍須安裝 Python 依賴、確認 `best.pt` 的類別名稱，並以實際 MR 拍攝資料校正信心度門檻。詳見[模型與資料集說明](../share_model/README.md)。

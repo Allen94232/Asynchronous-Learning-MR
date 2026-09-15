@@ -37,7 +37,7 @@ The Unity validation code supports responses containing more than one detection.
 
 ## Runtime Limitation
 
-The repository does not currently include `detect_shapes.py`, so the Python side that produces this response is unavailable in a clean clone. This document defines the contract a replacement detector must implement.
+The included `detect_shapes.py` implements this response contract for Unity. Keep this document and the script synchronized if fields or command-line options change.
 
 ## Required Detector Behavior
 

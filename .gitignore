@@ -101,3 +101,11 @@ InitTestScene*.unity*
 # Large Avatar SDK preset files (exceed GitHub size limits)
 Assets/Oculus/Avatar2_SampleAssets/SampleAssets/SampleAssets/PresetAvatars_*.zip
 Assets/Samples/Meta Avatars SDK/**/Environments/**/Directional*.hdr
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+*.cache
+
+# Runtime captures generated inside Assets
+/Assets/Recordings/
