@@ -103,4 +103,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: botsort.yaml
-save_dir: C:\Users\user\Desktop\Asynchronous Learning\Assets\share_model\runs\detect\origami_roboflow
+save_dir: runs/detect/origami_roboflow

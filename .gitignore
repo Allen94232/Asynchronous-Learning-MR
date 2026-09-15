@@ -109,3 +109,6 @@ __pycache__/
 
 # Runtime captures generated inside Assets
 /Assets/Recordings/
+
+# Manual source backups
+*.backup

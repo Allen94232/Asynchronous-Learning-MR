@@ -8,7 +8,7 @@ A mixed-reality prototype for recording and replaying avatar-based origami instr
 2. Recording data and origami step events are stored for later playback.
 3. A learner replays the demonstration in mixed reality.
 4. The guide synchronizes visual fold cues with the Alembic animation.
-5. The optional shape-detection path can be connected to an external Python detector.
+5. The optional shape-detection path runs the included local Python detector against the captured fold state.
 
 ## Main Features
 
