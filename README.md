@@ -1,49 +1,84 @@
 # Asynchronous Learning MR
 
-A Unity-based Mixed Reality (MR) asynchronous learning platform built for Meta Quest VR devices using the Meta Avatar SDK.
+A mixed-reality prototype for recording and replaying avatar-based origami instruction on Meta Quest. The project combines avatar motion, voice recording, step-based playback, hand interaction, passthrough, and an experimental shape-detection workflow.
 
-## Project Overview
+## System Workflow
 
-This is a mixed reality application designed for asynchronous learning. It allows instructors to record instructional content, which students can later replay and interact with in a VR environment.
+1. An instructor records an avatar demonstration and voice in the teacher scene.
+2. Recording data is stored for later playback.
+3. A learner replays the demonstration in mixed reality.
+4. The origami guide organizes playback into instructional steps.
+5. Shape-detection components can be used to support fold-state checking.
 
-## Key Features
+## Main Features
 
-- **Avatar System**: Virtual avatars implemented using Meta Avatar SDK 2.0
-- **Audio Recording and Playback**: Supports instructor audio recording and student playback
-- **Hand Tracking**: Interaction via VR controllers and hand tracking
-- **Passthrough Mode**: Supports mixed reality passthrough functionality
-- **Shape Detection**: Integrated YOLOv8 object detection model for origami shape recognition
+- Meta Avatar recording and playback
+- Continuous microphone capture and synchronized audio playback
+- Teacher recording and student playback interfaces
+- Step-based origami guidance and timeline synchronization
+- Controller and hand-tracking interaction components
+- Mixed-reality passthrough scenes
+- YOLO-based origami dataset and shape-detection utilities
+- Experimental avatar dialogue and text-to-speech components
+
+## Key Scenes
+
+| Scene | Purpose |
+| --- | --- |
+| [`TeacherRecording.unity`](Assets/Scenes/TeacherRecording.unity) | Instructor recording workflow |
+| [`StudentPlaying.unity`](Assets/Scenes/StudentPlaying.unity) | Learner playback workflow |
+| [`StudentPlayingWithPassthrough.unity`](Assets/Scenes/StudentPlayingWithPassthrough.unity) | Playback in mixed reality |
+| [`Mic Test.unity`](Assets/Scenes/Mic%20Test.unity) | Microphone testing |
+| [`LLM Avatar.unity`](Assets/Scenes/LLM%20Avatar.unity) | Experimental avatar dialogue |
+
+## Core Components
+
+| Component | Role |
+| --- | --- |
+| [`AvatarRecordingManager.cs`](Assets/Scripts/AvatarRecordingManager.cs) | Coordinates avatar and audio recording |
+| [`AvatarRecordingPlayback.cs`](Assets/Scripts/AvatarRecordingPlayback.cs) | Replays recorded avatar data |
+| [`TeacherRecordingManager.cs`](Assets/Scripts/TeacherRecordingManager.cs) | Controls the instructor workflow |
+| [`StudentPlaybackManager.cs`](Assets/Scripts/StudentPlaybackManager.cs) | Controls the learner workflow |
+| [`OrigamiSyncController.cs`](Assets/Scripts/OrigamiSyncController.cs) | Synchronizes origami animation and instruction |
+| [`OrigamiStepGuide.cs`](Assets/Scripts/OrigamiStepGuide.cs) | Manages step-based guidance |
+| [`ShapeDetector.cs`](Assets/Scripts/ShapeDetector.cs) | Connects fold-state detection to the Unity workflow |
+| [`AvatarLLMController.cs`](Assets/Scripts/AvatarLLMController.cs) | Experimental avatar dialogue controller |
+
+Additional implementation notes are available in [`Assets/Scripts`](Assets/Scripts).
 
 ## Technology Stack
 
-- **Unity Version**: 2022.3 or later
-- **VR SDK**: Meta XR SDK
-- **Avatar SDK**: Meta Avatar SDK 2.0
-- **ML Framework**: YOLOv8 (for object detection)
-- **Languages**: C#, Python
+- Unity `6000.0.23f1`
+- Meta XR SDK `81.0.0`
+- Meta Avatars SDK `40.0.1`
+- Universal Render Pipeline `17.0.3`
+- OpenXR `1.12.1`
+- C# and Python
+- YOLO-based object detection assets
 
-## Quick Start
+## Getting Started
 
-1. Open the project using Unity 2022.3 or later
-2. Install the Meta XR SDK and Avatar SDK 2.0
-3. Connect a Meta Quest device and enable Developer Mode
-4. Build and deploy to the device
+1. Install Unity `6000.0.23f1`.
+2. Clone the repository and add its root directory through Unity Hub.
+3. Open one of the scenes listed above.
+4. Configure the Meta Platform App ID required by the avatar and platform SDKs.
+5. Enable Developer Mode on the target Quest headset.
+6. Switch the build target to Android and use **Build and Run**.
 
-## Project Structure
+## Repository Structure
 
-Assets/
-├── Scripts/ # C# script files
-├── Scenes/ # Unity scene files
-├── Resources/ # Asset resources
-├── share_model/ # YOLOv8 models and training data
-└── Plugins/ # External plugins
+```text
+.
+├── Assets/
+│   ├── Scenes/           # Teacher, learner, passthrough, and test scenes
+│   ├── Scripts/          # Recording, playback, interaction, and guide logic
+│   └── share_model/      # Shape-detection dataset and documentation
+├── Packages/             # Unity package manifest and lock file
+└── ProjectSettings/      # Unity project configuration
+```
 
-Packages/ # Unity package management
-ProjectSettings/ # Project settings
+## Notes
 
-## System Requirements
-
-- Windows 10 or later
-- Unity 2022.3+
-- Meta Quest 2/3/Pro VR headset
-- Sufficient disk space for the Unity project and assets
+- Meta platform services require a valid App ID and an authorized test account.
+- Large generated Unity folders such as `Library`, `Temp`, and `Obj` are intentionally excluded.
+- Hardware-dependent recording, passthrough, and hand-tracking features should be tested on a Quest device.
