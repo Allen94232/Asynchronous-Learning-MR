@@ -1,6 +1,6 @@
-# 文字驅動 Avatar 控制器
+# 文字驅動 Avatar 控制器（封存實驗）
 
-`AvatarLLMController` 是一個實驗性元件，用輸入文字驅動 Remote Avatar 的測試語音、嘴型資料與程序式動作。目前版本尚未連接真正的 LLM，也沒有可用的雲端 TTS；`SimpleTTSService` 只會產生 Mock 測試音訊。
+`AvatarLLMController` 是早期封存的實驗性元件，不屬於目前教師錄製或學生播放的主要流程。它以輸入文字測試 Remote Avatar 語音與嘴型資料；目前未連接真正的 LLM，`SimpleTTSService` 只會產生 Mock 音訊，Avatar skeleton 手勢也尚未完成。
 
 ## 目前可用功能
 
@@ -8,7 +8,6 @@
 - 透過 `Speak(string text)` 播放測試音訊
 - 開始、停止及查詢播放狀態
 - 產生測試用 viseme 資料
-- 執行指向、解說與思考等程序式動作
 - 讓 Remote Avatar 位於玩家附近並朝向玩家
 
 ## 尚未實作
@@ -16,6 +15,7 @@
 - LLM API 呼叫與對話狀態
 - 真實文字轉語音服務
 - 語音辨識
+- Avatar skeleton 的指向、解說、思考、點頭與眨眼動作
 - 完整語意到手勢的動作規劃
 
 `SimpleTTSService` 雖然列出 Azure、Google 與 Wit.ai provider，但非 Mock provider 目前會自動切回 Mock 模式。

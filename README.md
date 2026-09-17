@@ -19,7 +19,7 @@ A mixed-reality prototype for recording and replaying avatar-based origami instr
 - Controller and hand-tracking interaction components
 - Mixed-reality passthrough scenes
 - YOLO model weights and an origami image dataset
-- Experimental text-to-avatar speech and gesture components
+- Archived text-to-avatar speech and gesture prototype
 
 ## Key Scenes
 
@@ -29,7 +29,7 @@ A mixed-reality prototype for recording and replaying avatar-based origami instr
 | [`StudentPlaying.unity`](Assets/Scenes/StudentPlaying.unity) | Learner playback workflow |
 | [`StudentPlayingWithPassthrough.unity`](Assets/Scenes/StudentPlayingWithPassthrough.unity) | Playback in mixed reality |
 | [`Mic Test.unity`](Assets/Scenes/Mic%20Test.unity) | Microphone testing |
-| [`LLM Avatar.unity`](Assets/Scenes/LLM%20Avatar.unity) | Experimental text-driven avatar scene |
+| [`LLM Avatar.unity`](Assets/Scenes/LLM%20Avatar.unity) | Archived text-driven avatar experiment |
 
 ## Core Components
 
@@ -42,7 +42,7 @@ A mixed-reality prototype for recording and replaying avatar-based origami instr
 | [`OrigamiSyncController.cs`](Assets/Scripts/OrigamiSyncController.cs) | Synchronizes the Alembic animation |
 | [`OrigamiStepGuideSimple.cs`](Assets/Scripts/OrigamiStepGuideSimple.cs) | Displays step cues and handles hand triggers |
 | [`ShapeDetector.cs`](Assets/Scripts/ShapeDetector.cs) | Defines the Unity side of fold-state detection |
-| [`AvatarLLMController.cs`](Assets/Scripts/AvatarLLMController.cs) | Drives test speech and avatar gestures |
+| [`AvatarLLMController.cs`](Assets/Scripts/AvatarLLMController.cs) | Archived prototype with mock speech and incomplete gesture hooks |
 
 ## Documentation
 
@@ -86,6 +86,10 @@ The repository includes model weights, a dataset, the Unity integration, and a c
 ├── Packages/             # Unity package manifest and lock file
 └── ProjectSettings/      # Unity project configuration
 ```
+
+## Archived Experiment
+
+`LLM Avatar.unity`, `AvatarLLMController`, and `SimpleTTSService` are retained as an earlier experiment and are not part of the primary teacher-recording or student-playback workflow. The speech service is mock-only and several skeleton gesture hooks remain incomplete.
 
 ## Notes
 
